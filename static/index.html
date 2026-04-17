@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Orchestrator’s Lens | Multi-Agent Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=1.1">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Floating Command Panel (Sidebar) -->
+        <aside class="sidebar">
+            <header class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">⬢</span>
+                    <h1>orchestrator</h1>
+                </div>
+            </header>
+            
+            <section class="agent-stats">
+                <div class="stat-group">
+                    <label>Planner Intelligence</label>
+                    <div class="stat-bar primary" style="width: 82%;"></div>
+                </div>
+                <div class="stat-group">
+                    <label>Executor Capacity</label>
+                    <div class="stat-bar secondary" style="width: 58%;"></div>
+                </div>
+                <div class="stat-group">
+                    <label>Evaluator Precision</label>
+                    <div class="stat-bar tertiary" style="width: 91%;"></div>
+                </div>
+            </section>
+
+            <footer class="sidebar-footer">
+                <span class="status-online">Operational Neutrality Confirmed</span>
+            </footer>
+        </aside>
+
+        <!-- Main Workspace: Weighted Layout -->
+        <main class="main-content">
+            <header class="board-header">
+                <div class="header-titles">
+                    <h2>History Timeline</h2>
+                    <p class="subtitle">Architectural Intelligence Multi-Agent Harness</p>
+                </div>
+                <div class="header-actions">
+                    <button id="addTaskBtn" class="btn primary-ghost">+ Initiate Thread</button>
+                    <div class="search-wrap">
+                        <!-- Search can go here later if needed -->
+                    </div>
+                </div>
+            </header>
+
+            <div class="kanban-board" id="kanbanBoard">
+                <!-- Columns -->
+                <section class="column" data-status="todo" id="col-todo">
+                    <header class="column-header">
+                        <span class="count">01</span>
+                        <h3>Queue</h3>
+                    </header>
+                    <div class="task-list"></div>
+                </section>
+
+                <section class="column active-stream" data-status="in-progress" id="col-in-progress">
+                    <header class="column-header">
+                        <span class="count">02</span>
+                        <h3>Debate Stream</h3>
+                    </header>
+                    <div class="task-list"></div>
+                </section>
+
+                <section class="column" data-status="done" id="col-done">
+                    <header class="column-header">
+                        <span class="count">03</span>
+                        <h3>Synthesis</h3>
+                    </header>
+                    <div class="task-list"></div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="taskModal" class="modal-overlay hidden">
+        <div class="modal-content glass">
+            <h3>Initiate New Agent Thread</h3>
+            <div class="input-group">
+                <input type="text" id="taskInput" placeholder="Describe the objective...">
+            </div>
+            <div class="modal-actions">
+                <button id="cancelBtn" class="btn secondary">Abort</button>
+                <button id="saveBtn" class="btn primary">Commit</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=1.1"></script>
+</body>
+</html>
