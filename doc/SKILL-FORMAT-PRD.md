@@ -35,6 +35,18 @@ agent는 task를 반복하면서 저장소 규칙, 작업 절차, 실패 패턴,
 - 사람이 읽고 수정할 수 있는 문서 기반 형식을 유지한다.
 - 새로운 지식을 검증 가능한 흐름으로 승격해 메모리 오염을 줄인다.
 
+## 3.1 구현 경계
+
+이 기능에서 `skill`은 실행 엔진이 아니라 문서 기반 지식 포맷이다. 실제 동작은 애플리케이션의 Python 오케스트레이션 레이어가 담당한다.
+
+역할 분리는 다음과 같다.
+
+- `skill`: 사람이 읽고 수정 가능한 지식 문서
+- `Python orchestrator`: `skill` 검색, 선택, 본문 로드, 프롬프트 조립, 실행 결과 기반 승격 처리
+- `agent executor adapter`: Cline CLI 또는 다른 agent 실행 백엔드 호출 담당
+
+즉, 본 기능의 기준 아키텍처는 `documented skills + Python control plane + pluggable executors`다.
+
 ## 4. 목표와 비목표
 
 ### 4.1 제품 목표
@@ -49,6 +61,7 @@ agent는 task를 반복하면서 저장소 규칙, 작업 절차, 실패 패턴,
 - 초기 MVP에서 벡터 데이터베이스나 복잡한 임베딩 검색을 필수로 요구하지 않는다.
 - 모든 task history를 자동으로 `skill`로 승격하지 않는다.
 - agent가 사람 승인 없이 기존 `validated skill`을 임의로 덮어쓰는 자동 자가 수정은 지원하지 않는다.
+- 오케스트레이션 제어권을 특정 CLI 도구에 고정하지 않는다.
 
 ## 5. 핵심 사용자
 
@@ -107,10 +120,10 @@ agent는 task를 반복하면서 저장소 규칙, 작업 절차, 실패 패턴,
 초기 MVP는 다음 기능을 지원한다.
 
 - `skill` 문서 포맷 정의
-- 헤더 메타데이터 기반 검색
-- 선택된 `skill` 본문 로드
+- Python 오케스트레이터에 의한 헤더 메타데이터 기반 검색
+- Python 오케스트레이터에 의한 선택된 `skill` 본문 로드와 프롬프트 조립
 - task별 사용 `skill` 추적
-- `candidate skill` 생성 및 승인 후 승격
+- Python 오케스트레이터에 의한 `candidate skill` 생성 및 승인 후 승격
 
 후속 단계에서 고려할 기능은 다음과 같다.
 
@@ -239,15 +252,16 @@ task 종료 후 승격 전 상태의 지식 초안이다.
 
 ### 12.1 Task 시작 시
 
-1. 시스템은 task 제목, 설명, 유형에서 키워드를 추출한다.
-2. `validated skill` 헤더를 대상으로 검색한다.
+1. Python 오케스트레이터는 task 제목, 설명, 유형에서 키워드를 추출한다.
+2. Python 오케스트레이터는 `validated skill` 헤더를 대상으로 검색한다.
 3. 관련도 점수를 계산해 상위 후보를 선택한다.
 4. 상위 2개에서 5개 사이의 `skill`만 본문을 로드한다.
 5. 본문 요약 또는 핵심 guidance를 실행 프롬프트에 삽입한다.
+6. 조립된 프롬프트는 executor adapter를 통해 Cline CLI 또는 다른 실행 백엔드로 전달된다.
 
 ### 12.2 Task 종료 시
 
-1. agent는 새로 발견한 지식이 있는지 요약한다.
+1. executor 결과를 받은 Python 오케스트레이터는 agent가 새로 발견한 지식이 있는지 요약한다.
 2. 시스템은 기존 `skill`과의 중복 또는 충돌을 검사한다.
 3. 재사용 가치가 있는 항목만 `candidate skill`로 저장한다.
 4. 승인 또는 평가 단계를 통과한 후보만 `validated`로 승격한다.
@@ -311,6 +325,14 @@ task 종료 후 승격 전 상태의 지식 초안이다.
 - 포맷은 사람이 직접 수정 가능한 plain text 기반이어야 한다.
 - 실패 시에도 `skill` 미적용 상태로 task 실행이 가능해야 한다.
 - 잘못된 파싱이나 누락된 메타데이터가 있어도 전체 시스템이 중단되면 안 된다.
+- 오케스트레이션 로직은 Python 코드에서 테스트 가능해야 하며 특정 executor 구현과 분리되어야 한다.
+
+## 16.1 구현 아키텍처 요구사항
+
+- Python 오케스트레이터는 `skill registry`, `prompt builder`, `executor adapter`, `skill promotion manager`를 분리된 모듈로 가져야 한다.
+- executor adapter는 최소한 Cline CLI를 지원하되, 다른 실행 백엔드로 교체 가능해야 한다.
+- `skill` 포맷, 검색 정책, 승격 정책은 executor 종류와 무관하게 동일하게 동작해야 한다.
+- 특정 CLI의 내부 skill 메커니즘에 의존하지 않고 애플리케이션 레벨에서 `skill` 적용 이력을 기록해야 한다.
 
 ## 17. 성공 지표
 
@@ -380,9 +402,9 @@ repo 정책이나 워크플로우가 바뀌면 오래된 `skill`이 오작동을
 
 ## 20. MVP 수용 기준
 
-- 시스템은 `validated skill` 헤더를 검색해 관련 후보를 찾을 수 있어야 한다.
-- 시스템은 선택된 `skill`의 본문만 읽어 실행 컨텍스트에 주입할 수 있어야 한다.
-- 시스템은 task 종료 시 새 지식을 `candidate skill` 문서로 저장할 수 있어야 한다.
+- Python 오케스트레이터는 `validated skill` 헤더를 검색해 관련 후보를 찾을 수 있어야 한다.
+- Python 오케스트레이터는 선택된 `skill`의 본문만 읽어 실행 컨텍스트에 주입할 수 있어야 한다.
+- Python 오케스트레이터는 executor adapter를 통해 조립된 프롬프트를 실행 백엔드에 전달할 수 있어야 한다.
+- Python 오케스트레이터는 task 종료 시 새 지식을 `candidate skill` 문서로 저장할 수 있어야 한다.
 - 사용자는 `candidate skill`을 검토 후 `validated`로 승격할 수 있어야 한다.
 - 사용자는 특정 run에 어떤 `skill`이 적용되었는지 확인할 수 있어야 한다.
-
