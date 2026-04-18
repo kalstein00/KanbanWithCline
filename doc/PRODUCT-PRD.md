@@ -67,26 +67,32 @@
 ### Scenario A. 문서 분석 후 PRD 생성
 
 1. 사용자가 코드베이스 또는 문서 묶음을 입력한다.
-2. Planner agent가 요구사항과 제약을 정리한다.
-3. Executor 또는 Cline이 초안 PRD를 작성한다.
-4. Evaluator가 누락 항목과 모호성을 지적한다.
-5. 사용자가 최종 PRD를 승인하거나 재실행한다.
+2. Planner agent가 요구사항, 제약, 문서 범위, 작성 계획을 정리한다.
+3. Reviewer가 계획의 누락, 모호성, 실행 가능성을 검토한다.
+4. 승인된 계획만 Executor 또는 Cline으로 전달되어 초안 PRD를 작성한다.
+5. Reviewer가 초안의 구조 결손, 요구사항 누락, 모호성을 검토한다.
+6. Evaluator가 현재 run을 채택할지, 실행만 재시도할지, 계획부터 다시 시작할지 결정한다.
+7. 사용자가 최종 PRD를 승인하거나 다음 루프를 시작한다.
 
 ### Scenario B. 디버깅
 
 1. 사용자가 에러 로그와 관련 파일을 task로 등록한다.
-2. Planner가 원인 가설과 점검 순서를 제시한다.
-3. Executor가 재현, 수정, 검증을 시도한다.
-4. Evaluator가 수정의 타당성과 회귀 위험을 검토한다.
-5. 사용자가 패치 또는 권장 조치를 채택한다.
+2. Planner가 원인 가설, 점검 순서, 검증 계획을 제시한다.
+3. Reviewer가 가설의 타당성, 점검 순서, 재현 전략의 누락 여부를 검토한다.
+4. 승인된 계획을 기반으로 Executor가 재현, 수정, 검증을 시도한다.
+5. Reviewer가 수정의 타당성, 회귀 위험, 검증 증거를 검토한다.
+6. Evaluator가 실행 결과를 채택할지, 실행만 다시 할지, 계획을 수정해야 하는지 결정한다.
+7. 사용자가 패치 또는 권장 조치를 채택한다.
 
 ### Scenario C. 테스트 케이스 작성
 
 1. 사용자가 특정 모듈과 테스트 공백을 입력한다.
-2. Planner가 테스트 전략과 경계 조건을 정리한다.
-3. Executor가 테스트 코드를 작성한다.
-4. Evaluator가 누락된 케이스와 flaky 가능성을 검토한다.
-5. 사용자가 테스트 세트를 승인하거나 보강 요청한다.
+2. Planner가 테스트 전략, 경계 조건, 커버리지 목표를 정리한다.
+3. Reviewer가 테스트 계획의 누락 케이스와 범위 적절성을 검토한다.
+4. 승인된 계획을 기반으로 Executor가 테스트 코드를 작성한다.
+5. Reviewer가 정상 경로, 경계 조건, flaky 가능성, 누락 케이스를 검토한다.
+6. Evaluator가 결과를 채택할지, 실행 보강이 필요한지, 계획 재작성부터 필요한지 결정한다.
+7. 사용자가 테스트 세트를 승인하거나 보강 요청한다.
 
 ## 7. 지원 작업 범위
 
@@ -135,6 +141,14 @@
 ### Agent
 
 실행에 참여하는 역할 또는 도구 단위다.
+
+역할 예시:
+
+- `Planner`: 작업 계획과 성공 기준 정의
+- `Reviewer`: 계획 또는 실행 산출물의 중간 검증
+- `Executor`: 산출물 생성, 수정, 실행
+- `Evaluator`: 전체 run 기준 최종 판단과 다음 루프 결정
+- `Cline`: Executor 역할을 수행할 수 있는 구체적 agent 구현
 
 예시 필드:
 
@@ -203,6 +217,8 @@ Run 내부의 세부 실행 단계다.
 - `reason`
 - `risks`
 - `recommendedNextAction`
+- `loopTarget`
+- `approvalStatus`
 
 ## 9. Orchestration 모드
 
@@ -211,10 +227,11 @@ Run 내부의 세부 실행 단계다.
 - 빠른 탐색이나 단순 작업에 사용한다.
 - 하나의 agent가 계획부터 실행까지 처리한다.
 
-### Mode 2. Planner -> Executor -> Evaluator
+### Mode 2. Planner -> Reviewer -> Executor -> Reviewer -> Evaluator
 
 - 기본 권장 모드다.
-- 계획, 실행, 평가를 분리해 품질과 추적성을 확보한다.
+- 계획 검증과 실행 검증을 분리해 품질과 추적성을 확보한다.
+- Reviewer는 phase에 따라 `plan review`와 `execution review`를 수행한다.
 
 ### Mode 3. Debate
 
@@ -223,7 +240,8 @@ Run 내부의 세부 실행 단계다.
 
 ### Mode 4. Retry With Critique
 
-- 첫 결과가 미흡할 때 평가 피드백을 바탕으로 재실행한다.
+- 첫 결과가 미흡할 때 Reviewer와 Evaluator의 피드백을 바탕으로 재실행한다.
+- Evaluator는 `replan` 또는 `re-execute` 중 어디로 되돌릴지 결정한다.
 
 ### Mode 5. Human In The Loop
 
@@ -234,18 +252,21 @@ Run 내부의 세부 실행 단계다.
 `todo / in-progress / done`만으로는 제품 상태를 설명하기 부족하다. MVP 기준의 run 상태는 다음과 같이 정의한다.
 
 - `draft`
-- `planned`
-- `running`
-- `awaiting_review`
-- `revising`
+- `planning`
+- `plan_review`
+- `executing`
+- `execution_review`
+- `evaluating`
+- `revising_plan`
+- `revising_execution`
 - `completed`
 - `failed`
 - `cancelled`
 
 프런트의 3개 컬럼은 초기에는 아래와 같이 해석할 수 있다.
 
-- `Queue`: `draft`, `planned`
-- `Debate Stream`: `running`, `revising`, `awaiting_review`
+- `Queue`: `draft`, `planning`, `plan_review`
+- `Debate Stream`: `executing`, `execution_review`, `evaluating`, `revising_plan`, `revising_execution`
 - `Synthesis`: `completed`, `failed`, `cancelled`
 
 보드 배치 규칙:
@@ -264,12 +285,13 @@ Run 내부의 세부 실행 단계다.
 ### FR-2. Orchestration 모드 선택
 
 - 사용자는 task 실행 전 orchestration 모드를 선택할 수 있어야 한다.
-- 기본값은 `Planner -> Executor -> Evaluator`로 한다.
+- 기본값은 `Planner -> Reviewer -> Executor -> Reviewer -> Evaluator`로 한다.
 
 ### FR-3. Run 추적
 
 - 사용자는 현재 실행 중인 run의 상태를 확인할 수 있어야 한다.
 - 각 단계에서 어떤 agent가 무엇을 수행 중인지 요약이 보여야 한다.
+- 시스템은 `plan review`와 `execution review`를 구분해 보여줘야 한다.
 
 ### FR-4. Artifact 확인
 
@@ -279,12 +301,13 @@ Run 내부의 세부 실행 단계다.
 ### FR-5. Verdict 확인
 
 - 사용자는 평가 결과와 리스크를 확인할 수 있어야 한다.
-- 시스템은 `채택`, `재실행`, `보완 필요` 같은 다음 액션을 제안해야 한다.
+- 시스템은 `채택`, `실행 재시도`, `계획 재작성`, `보완 필요` 같은 다음 액션을 제안해야 한다.
 
 ### FR-6. 재실행
 
 - 사용자는 이전 평가 피드백을 바탕으로 동일 task를 다시 실행할 수 있어야 한다.
 - 재실행은 기존 task를 수정하는 것이 아니라 새 run을 생성해야 한다.
+- 시스템은 재실행 시 `Executor` 단계부터 재시도할지 `Planner` 단계부터 다시 시작할지 구분해야 한다.
 
 ### FR-7. 히스토리 확인
 
@@ -302,10 +325,11 @@ Run 내부의 세부 실행 단계다.
 ### UI-2. Run 상세 패널
 
 - 선택한 카드의 상세 실행 단계, agent, artifact, verdict를 볼 수 있어야 한다.
+- 계획 검토와 실행 검토가 어떤 근거로 통과 또는 반려되었는지 볼 수 있어야 한다.
 
 ### UI-3. Agent 가시성
 
-- Planner, Executor, Evaluator, Cline 같은 agent의 역할을 명확히 구분해야 한다.
+- Planner, Reviewer, Executor, Evaluator, Cline 같은 agent의 역할을 명확히 구분해야 한다.
 
 ### UI-4. 결과 비교
 
@@ -348,6 +372,7 @@ Run 내부의 세부 실행 단계다.
 ### NFR-1. 추적성
 
 - 각 run은 어떤 입력과 어떤 결과를 거쳐 결론에 도달했는지 추적 가능해야 한다.
+- 특히 계획 검토와 실행 검토의 승인 또는 반려 근거가 분리되어 남아야 한다.
 
 ### NFR-2. 검토 가능성
 
@@ -367,7 +392,7 @@ Run 내부의 세부 실행 단계다.
 
 ## 15. 작업 유형별 완료 기준
 
-작업 유형이 넓기 때문에 evaluator가 주관적 메모로 끝나지 않도록 최소 완료 기준을 둔다.
+작업 유형이 넓기 때문에 reviewer와 evaluator가 주관적 메모로 끝나지 않도록 최소 완료 기준을 둔다.
 
 ### Type A. 문서 분석
 
@@ -379,7 +404,8 @@ Run 내부의 세부 실행 단계다.
 
 - 목표, 사용자, 범위, 핵심 기능, 비기능 요구사항이 포함되어야 한다.
 - 누락된 결정 사항은 오픈 이슈로 분리되어야 한다.
-- evaluator는 모호성 또는 결손 섹션을 지적해야 한다.
+- reviewer는 계획 또는 결과의 모호성, 결손 섹션, 범위 누락을 지적해야 한다.
+- evaluator는 채택 또는 재루프 판단 근거를 제시해야 한다.
 
 ### Type C. 디버깅
 
@@ -391,7 +417,7 @@ Run 내부의 세부 실행 단계다.
 
 - 대상 모듈과 커버하려는 케이스 범위가 명시되어야 한다.
 - 정상 경로와 경계/실패 케이스가 구분되어야 한다.
-- flaky 가능성 또는 누락 케이스가 평가에 포함되어야 한다.
+- flaky 가능성 또는 누락 케이스가 review에 포함되어야 한다.
 
 ### Type E. 코드 리뷰 보조
 
@@ -419,6 +445,7 @@ MVP 단계에서는 아래 지표를 본다.
 - 3개 컬럼 기반 상태 보드
 - run 진행 상태 시각화
 - artifact와 verdict 표시
+- plan review와 execution review 분리 표시
 - 수동 재실행
 
 MVP에서 제외한다.
@@ -435,13 +462,16 @@ MVP에서 제외한다.
 - Cline을 기본 Executor로 고정할지, 범용 agent 중 하나로 둘지
 - run 갱신 방식을 polling으로 시작할지, SSE/WebSocket으로 갈지
 - artifact diff를 어떤 수준까지 UI에서 보여줄지
-- human approval 단계를 어디에 삽입할지
+- human approval 단계를 `plan review`, `execution review`, `evaluation` 중 어디에 삽입할지
 - task type별 템플릿을 둘지
+- Reviewer를 단일 role의 두 모드로 구현할지, plan/execution reviewer를 분리된 agent로 둘지
 
 용어 정리 필요:
 
 - 현재 문서에서는 `Cline`을 기본적으로 `Executor` 역할을 수행하는 agent로 가정한다.
 - 다만 향후에는 다른 executor agent와 병렬 비교될 수 있으므로, 제품 모델상으로는 `Agent`의 한 종류로 유지한다.
+- `Reviewer`는 계획 단계와 실행 단계 모두에 적용되는 검증 role이며, phase에 따라 다른 체크리스트를 사용한다.
+- `Evaluator`는 결함 탐지보다 `채택 / re-execute / replan` 결정을 내리는 orchestration 판단자다.
 
 ## 19. 다음 문서 작업
 
@@ -452,4 +482,4 @@ MVP에서 제외한다.
 2. `doc/FRONTEND-DELIVERY-PLAN.md`
    현재 정적 프런트를 제품 PRD에 맞춰 어떤 순서로 구현할지 정리
 3. 백엔드 API 초안 문서
-   task/run/artifact/verdict 중심 REST 계약 정의
+   task/run/step/artifact/verdict 중심 REST 계약 정의
