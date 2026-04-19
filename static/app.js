@@ -1,16 +1,7 @@
 const BOARD_GROUPS = {
     queue: ["draft", "planned"],
     stream: ["running", "awaiting_review", "revising"],
-    synthesis: ["completed", "failed", "cancelled"],
-};
-
-const TYPE_LABELS = {
-    document_analysis: "Document Analysis",
-    prd_generation: "PRD Generation",
-    debugging: "Debugging",
-    test_writing: "Test Writing",
-    code_review: "Code Review",
-    refactor_planning: "Refactor Planning",
+    synthesis: ["completed", "failed", "cancelled", "orphaned"],
 };
 
 const MODE_LABELS = {
@@ -18,6 +9,9 @@ const MODE_LABELS = {
     "single-agent": "Single Agent",
     debate: "Debate",
 };
+
+const ARTIFACT_SCROLL_LINE_THRESHOLD = 12;
+const ARTIFACT_SCROLL_CHAR_THRESHOLD = 1200;
 
 const state = {
     meta: {
@@ -37,7 +31,6 @@ const state = {
         source: null,
     },
     filters: {
-        type: "all",
         status: "all",
     },
     ui: {
@@ -59,13 +52,11 @@ const reopenBtn = document.getElementById("reopenBtn");
 const approveBtn = document.getElementById("approveBtn");
 const cancelRunBtn = document.getElementById("cancelRunBtn");
 const taskTitleInput = document.getElementById("taskTitleInput");
-const taskTypeInput = document.getElementById("taskTypeInput");
 const taskGoalInput = document.getElementById("taskGoalInput");
 const taskConstraintsInput = document.getElementById("taskConstraintsInput");
 const taskModeInput = document.getElementById("taskModeInput");
 const taskPriorityInput = document.getElementById("taskPriorityInput");
 const taskPathsInput = document.getElementById("taskPathsInput");
-const taskTypeFilter = document.getElementById("taskTypeFilter");
 const statusFilter = document.getElementById("statusFilter");
 const globalBanner = document.getElementById("globalBanner");
 
@@ -109,11 +100,6 @@ function bindEvents() {
     addTaskBtn.addEventListener("click", openTaskModal);
     cancelBtn.addEventListener("click", closeTaskModal);
     saveBtn.addEventListener("click", createTask);
-
-    taskTypeFilter.addEventListener("change", (event) => {
-        state.filters.type = event.target.value;
-        renderWorkbench();
-    });
 
     statusFilter.addEventListener("change", (event) => {
         state.filters.status = event.target.value;
@@ -290,7 +276,6 @@ function replaceRunInCache(taskId, run) {
 async function createTask() {
     const title = taskTitleInput.value.trim();
     const goal = taskGoalInput.value.trim();
-    const type = taskTypeInput.value;
     const mode = taskModeInput.value;
     const priority = taskPriorityInput.value;
     const constraints = splitMultiline(taskConstraintsInput.value);
@@ -307,7 +292,7 @@ async function createTask() {
     try {
         const task = await api("/api/tasks", {
             method: "POST",
-            body: JSON.stringify({ title, type, goal, mode, priority, constraints, relatedPaths }),
+            body: JSON.stringify({ title, goal, mode, priority, constraints, relatedPaths }),
         });
         closeTaskModal();
         await loadBoard();
@@ -482,8 +467,7 @@ function createTaskCard(task, run) {
 
     card.innerHTML = `
         <div class="card-head">
-            <span class="meta-pill">${TYPE_LABELS[task.type] || task.type}</span>
-            <span class="status-badge">${formatStatus(run.status)}</span>
+            <span class="status-badge ${escapeHtml(run.status)}">${formatStatus(run.status)}</span>
         </div>
         <h4>${escapeHtml(task.title)}</h4>
         <p class="card-goal">${escapeHtml(task.goal)}</p>
@@ -538,7 +522,6 @@ function renderDetailPanel() {
     detailContent.classList.remove("hidden");
 
     document.getElementById("detailTaskTitle").textContent = task.title;
-    document.getElementById("detailTaskType").textContent = TYPE_LABELS[task.type] || task.type;
     document.getElementById("detailTaskPriority").textContent = task.priority;
     document.getElementById("detailTaskGoal").textContent = task.goal;
 
@@ -564,7 +547,15 @@ function renderDetailPanel() {
     const verdict = state.verdictsByRunId[run.id] || run.verdict;
     const artifacts = state.artifactsByRunId[run.id] || run.artifacts || [];
 
-    document.getElementById("detailRunStatus").textContent = formatStatus(run.status);
+    if (run.status === "orphaned" && (!verdict || verdict.decision === "pending")) {
+        verdict.reason = verdict.reason || "This run was interrupted while the server restarted or the worker exited.";
+        verdict.recommendedNextAction = verdict.recommendedNextAction || "retry_or_reopen";
+        verdict.risks = verdict.risks?.length ? verdict.risks : ["The previous execution did not reach a terminal state"];
+    }
+
+    const detailRunStatus = document.getElementById("detailRunStatus");
+    detailRunStatus.textContent = formatStatus(run.status);
+    detailRunStatus.className = `status-badge ${run.status}`;
     document.getElementById("detailRunMode").textContent = MODE_LABELS[run.mode] || run.mode;
     document.getElementById("detailRunStartedAt").textContent = formatDate(run.startedAt);
     document.getElementById("detailRunProvider").textContent = `${run.runner?.provider || "mock"}${run.runner?.available ? "" : " unavailable"}`;
@@ -693,6 +684,8 @@ function renderArtifacts(artifacts) {
     artifacts.forEach((artifact) => {
         const item = document.createElement("article");
         item.className = `artifact-item${artifact.selected ? " selected" : ""}`;
+        const shouldConstrainContent = shouldRenderArtifactInScrollBox(artifact);
+        const contentClassName = shouldConstrainContent ? "artifact-content artifact-content-scrollable" : "artifact-content";
         item.innerHTML = `
             <div class="timeline-meta">
                 <span class="meta-pill">${escapeHtml(artifact.type)}</span>
@@ -700,10 +693,20 @@ function renderArtifacts(artifacts) {
             </div>
             <strong>${escapeHtml(artifact.title)}</strong>
             <p>${escapeHtml(artifact.path || "inline artifact")}</p>
-            ${artifact.content ? `<pre class="artifact-content">${escapeHtml(artifact.content)}</pre>` : ""}
+            ${artifact.content ? `<pre class="${contentClassName}">${escapeHtml(artifact.content)}</pre>` : ""}
         `;
         list.appendChild(item);
     });
+}
+
+function shouldRenderArtifactInScrollBox(artifact) {
+    if (!artifact?.content) {
+        return false;
+    }
+
+    const lineCount = artifact.content.split("\n").length;
+    const isInlineArtifact = !artifact.path;
+    return isInlineArtifact || lineCount > ARTIFACT_SCROLL_LINE_THRESHOLD || artifact.content.length > ARTIFACT_SCROLL_CHAR_THRESHOLD;
 }
 
 function renderVerdict(verdict) {
@@ -762,7 +765,7 @@ function syncActionState(status) {
         cancelRunBtn.disabled = true;
     }
 
-    if (status === "cancelled" || status === "failed") {
+    if (status === "cancelled" || status === "failed" || status === "orphaned") {
         reopenBtn.disabled = false;
         cancelRunBtn.disabled = true;
         approveBtn.disabled = true;
@@ -791,7 +794,6 @@ function closeTaskModal() {
     taskGoalInput.value = "";
     taskConstraintsInput.value = "";
     taskPathsInput.value = "";
-    taskTypeInput.value = "document_analysis";
     taskModeInput.value = "plan-execute-eval";
     taskPriorityInput.value = "medium";
 }
@@ -799,9 +801,8 @@ function closeTaskModal() {
 function getVisibleTasks() {
     return state.tasks.filter((task) => {
         const latestRun = getLatestRun(task);
-        const matchesType = state.filters.type === "all" || task.type === state.filters.type;
         const matchesStatus = state.filters.status === "all" || task.latestRunStatus === state.filters.status;
-        return matchesType && matchesStatus && latestRun;
+        return matchesStatus && latestRun;
     });
 }
 

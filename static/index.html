@@ -61,18 +61,6 @@
                 <h2>Filters</h2>
                 <div class="filter-stack">
                     <label class="filter-field">
-                        <span>Task Type</span>
-                        <select id="taskTypeFilter">
-                            <option value="all">All types</option>
-                            <option value="document_analysis">Document Analysis</option>
-                            <option value="prd_generation">PRD Generation</option>
-                            <option value="debugging">Debugging</option>
-                            <option value="test_writing">Test Writing</option>
-                            <option value="code_review">Code Review</option>
-                            <option value="refactor_planning">Refactor Planning</option>
-                        </select>
-                    </label>
-                    <label class="filter-field">
                         <span>Run Status</span>
                         <select id="statusFilter">
                             <option value="all">All statuses</option>
@@ -84,6 +72,7 @@
                             <option value="completed">Completed</option>
                             <option value="failed">Failed</option>
                             <option value="cancelled">Cancelled</option>
+                            <option value="orphaned">Orphaned</option>
                         </select>
                     </label>
                 </div>
@@ -138,6 +127,7 @@
                                 <div>
                                     <h3>Synthesis</h3>
                                     <p>Completed, failed, or cancelled runs</p>
+                                    <p class="column-note">Includes orphaned runs after server restart.</p>
                                 </div>
                             </header>
                             <div class="task-list"></div>
@@ -156,7 +146,6 @@
                                 <span class="detail-kicker">Selected Task</span>
                                 <h3 id="detailTaskTitle">Task title</h3>
                                 <div class="task-summary-meta">
-                                    <span class="meta-pill" id="detailTaskType">type</span>
                                     <span class="meta-pill" id="detailTaskPriority">priority</span>
                                 </div>
                                 <p class="detail-copy" id="detailTaskGoal"></p>
@@ -189,6 +178,18 @@
                                         <span class="meta-pill" id="clineAvailability">checking</span>
                                     </div>
                                     <p class="detail-copy" id="detailRunCommand"></p>
+                                </div>
+                            </section>
+
+                            <section class="detail-section detail-actions-section">
+                                <div class="section-heading">
+                                    <h4>Actions</h4>
+                                </div>
+                                <div class="action-row">
+                                    <button class="btn secondary" id="retryBtn">Retry</button>
+                                    <button class="btn primary-ghost" id="reopenBtn">Reopen</button>
+                                    <button class="btn primary" id="approveBtn">Approve</button>
+                                    <button class="btn subtle" id="cancelRunBtn">Cancel</button>
                                 </div>
                             </section>
 
@@ -233,18 +234,6 @@
                                     <div class="risk-list" id="detailVerdictRisks"></div>
                                 </div>
                             </section>
-
-                            <section class="detail-section">
-                                <div class="section-heading">
-                                    <h4>Actions</h4>
-                                </div>
-                                <div class="action-row">
-                                    <button class="btn secondary" id="retryBtn">Retry</button>
-                                    <button class="btn primary-ghost" id="reopenBtn">Reopen</button>
-                                    <button class="btn primary" id="approveBtn">Approve</button>
-                                    <button class="btn subtle" id="cancelRunBtn">Cancel</button>
-                                </div>
-                            </section>
                         </div>
                     </aside>
                 </div>
@@ -259,17 +248,6 @@
                 <label class="input-group">
                     <span>Title</span>
                     <input type="text" id="taskTitleInput" placeholder="Describe the objective...">
-                </label>
-                <label class="input-group">
-                    <span>Type</span>
-                    <select id="taskTypeInput">
-                        <option value="document_analysis">Document Analysis</option>
-                        <option value="prd_generation">PRD Generation</option>
-                        <option value="debugging">Debugging</option>
-                        <option value="test_writing">Test Writing</option>
-                        <option value="code_review">Code Review</option>
-                        <option value="refactor_planning">Refactor Planning</option>
-                    </select>
                 </label>
                 <label class="input-group">
                     <span>Goal</span>

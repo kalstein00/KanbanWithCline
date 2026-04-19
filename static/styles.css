@@ -304,6 +304,11 @@ select {
     color: var(--on-surface-variant);
 }
 
+.column-note {
+    font-size: 0.72rem;
+    margin-top: 0.25rem;
+}
+
 .task-list {
     display: flex;
     flex-direction: column;
@@ -444,6 +449,11 @@ select {
     font-weight: 700;
 }
 
+.status-badge.orphaned {
+    background: rgba(107, 61, 145, 0.14);
+    color: var(--secondary);
+}
+
 .status-badge.subtle {
     background: rgba(68, 71, 78, 0.08);
     color: var(--on-surface-variant);
@@ -482,6 +492,21 @@ select {
     gap: 0.85rem;
     padding-bottom: 1.1rem;
     border-bottom: 1px solid rgba(194, 198, 214, 0.28);
+}
+
+.detail-actions-section {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding-top: 0.35rem;
+    background: linear-gradient(180deg, rgba(247, 243, 235, 0.98) 0%, rgba(247, 243, 235, 0.9) 65%, rgba(247, 243, 235, 0) 100%);
+}
+
+.detail-actions-section .action-row {
+    padding: 0.9rem 1rem;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.84);
+    box-shadow: var(--ambient-shadow);
 }
 
 .detail-section:last-child {
@@ -582,6 +607,12 @@ select {
     font-size: 0.78rem;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.artifact-content-scrollable {
+    max-height: 16rem;
+    overflow: auto;
+    overscroll-behavior: contain;
 }
 
 .btn {
@@ -741,6 +772,10 @@ select {
     .action-row,
     .modal-actions {
         flex-direction: column;
+    }
+
+    .detail-actions-section {
+        top: -0.25rem;
     }
 
     .run-facts {

@@ -6,7 +6,7 @@ import queue
 import subprocess
 import threading
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from shutil import which
 from typing import Any, Literal
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 RUN_LOG_DIR = BASE_DIR / "logs" / "runs"
+SYSTEM_LOG_DIR = BASE_DIR / "logs" / "system"
 CLINE_PATH = which("cline")
 CLINE_TIMEOUT_SECONDS = 120
 MAX_RUN_LOG_FILES = 5
@@ -29,12 +30,16 @@ MAX_RUN_LOG_FILES = 5
 RUN_STATUS_GROUPS = {
     "queue": {"draft", "planned"},
     "stream": {"running", "awaiting_review", "revising"},
-    "synthesis": {"completed", "failed", "cancelled"},
+    "synthesis": {"completed", "failed", "cancelled", "orphaned"},
 }
 
 
-def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+def local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def local_now_iso() -> str:
+    return local_now().isoformat()
 
 
 def new_id(prefix: str) -> str:
@@ -135,7 +140,8 @@ class RunJsonlLogger:
 
     def create_run_log(self, task_id: str, run_id: str) -> Path:
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}_{task_id}_{run_id}.jsonl"
+        timestamp = local_now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"{timestamp}_{run_id}.jsonl"
         path = self.base_dir / filename
         path.touch(exist_ok=True)
         self.prune()
@@ -163,22 +169,89 @@ class RunJsonlLogger:
                 "name": item.name,
                 "path": str(item),
                 "size": item.stat().st_size,
-                "modifiedAt": datetime.fromtimestamp(item.stat().st_mtime, UTC).isoformat(),
+                "modifiedAt": datetime.fromtimestamp(item.stat().st_mtime).astimezone().isoformat(),
             }
             for item in files
         ]
 
+    def read_last_record(self, path: Path) -> dict[str, Any] | None:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return None
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        return None
+
+    def reconcile_orphaned_runs(self) -> list[str]:
+        terminal_kinds = {"run_failed", "run_action", "process_exit", "completion_result", "orphaned_run"}
+        reconciled: list[str] = []
+        for metadata in self.list_recent():
+            path = Path(metadata["path"])
+            last_record = self.read_last_record(path)
+            if not last_record:
+                continue
+            if last_record.get("runStatus") not in {"running", "revising"}:
+                continue
+            if last_record.get("kind") in terminal_kinds:
+                continue
+            orphan_record = {
+                "ts": local_now_iso(),
+                "kind": "orphaned_run",
+                "taskId": last_record.get("taskId"),
+                "runId": last_record.get("runId"),
+                "message": "Run was still active when the server restarted or the worker stopped unexpectedly.",
+                "payload": {"previousKind": last_record.get("kind")},
+                "runStatus": "orphaned",
+                "currentPhase": last_record.get("currentPhase"),
+                "summary": last_record.get("summary"),
+            }
+            self.append(str(path), orphan_record)
+            reconciled.append(path.name)
+        return reconciled
+
+
+class SystemJsonlLogger:
+    def __init__(self, base_dir: Path, *, max_files: int) -> None:
+        self.base_dir = base_dir
+        self.max_files = max_files
+        self.lock = threading.Lock()
+
+    def current_log_path(self) -> Path:
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        path = self.base_dir / f"{local_now().strftime('%Y-%m-%d')}_server.jsonl"
+        path.touch(exist_ok=True)
+        self.prune()
+        return path
+
+    def append(self, kind: str, message: str, *, payload: dict[str, Any] | None = None) -> None:
+        line = json.dumps(
+            {
+                "ts": local_now_iso(),
+                "kind": kind,
+                "message": message,
+                "payload": payload,
+            },
+            ensure_ascii=True,
+        ) + "\n"
+        path = self.current_log_path()
+        with self.lock:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+
+    def prune(self) -> None:
+        files = sorted(self.base_dir.glob("*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True)
+        for stale in files[self.max_files :]:
+            stale.unlink(missing_ok=True)
+
 
 class TaskCreate(BaseModel):
     title: str
-    type: Literal[
-        "document_analysis",
-        "prd_generation",
-        "debugging",
-        "test_writing",
-        "code_review",
-        "refactor_planning",
-    ]
     goal: str
     constraints: list[str] = Field(default_factory=list)
     priority: Literal["low", "medium", "high"] = "medium"
@@ -220,7 +293,7 @@ class InMemoryStore:
     def _event(self, event_type: str, summary: str, *, raw: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "id": new_id("event"),
-            "ts": utc_now(),
+            "ts": local_now_iso(),
             "type": event_type,
             "summary": summary,
             "raw": sanitize_event_raw(raw),
@@ -234,7 +307,7 @@ class InMemoryStore:
             "path": path,
             "selected": selected,
             "content": content,
-            "createdAt": utc_now(),
+            "createdAt": local_now_iso(),
         }
 
     def list_tasks(self) -> list[dict[str, Any]]:
@@ -249,12 +322,11 @@ class InMemoryStore:
         with self.lock:
             task_id = new_id("task")
             run_id = new_id("run")
-            now = utc_now()
+            now = local_now_iso()
             log_path = self.create_log_path(task_id, run_id)
             task = {
                 "id": task_id,
                 "title": payload.title.strip(),
-                "type": payload.type,
                 "goal": payload.goal.strip(),
                 "constraints": [item.strip() for item in payload.constraints if item.strip()],
                 "priority": payload.priority,
@@ -356,7 +428,7 @@ class InMemoryStore:
             existing["content"] = content
             existing["path"] = path
             existing["selected"] = selected
-            existing["createdAt"] = utc_now()
+            existing["createdAt"] = local_now_iso()
             self.log_run_record(
                 run["taskId"],
                 run["id"],
@@ -399,7 +471,7 @@ class InMemoryStore:
         run = self.get_run(run_id)
         log_path = run.get("runner", {}).get("logPath") if run else None
         record = {
-            "ts": utc_now(),
+            "ts": local_now_iso(),
             "kind": kind,
             "taskId": task_id,
             "runId": run_id,
@@ -448,7 +520,7 @@ class InMemoryStore:
                 "taskId": task_id,
                 "mode": previous_run["mode"],
                 "status": status,
-                "startedAt": utc_now(),
+                "startedAt": local_now_iso(),
                 "endedAt": None,
                 "currentPhase": "execute",
                 "primaryAgentRole": "Cline Executor" if payload.useCline and CLINE_PATH else "Executor",
@@ -493,7 +565,7 @@ class InMemoryStore:
             task = self.get_task(run["taskId"])
             if payload.action == "approve":
                 run["status"] = "completed"
-                run["endedAt"] = utc_now()
+                run["endedAt"] = local_now_iso()
                 run["currentPhase"] = "eval"
                 run["primaryAgentRole"] = "Evaluator"
                 run["summary"] = "Run approved from the workbench."
@@ -521,7 +593,7 @@ class InMemoryStore:
                 run["steps"] = [self._step("plan", "Planner", "pending", "Planning will resume when the task is started again.")]
             else:
                 run["status"] = "cancelled"
-                run["endedAt"] = utc_now()
+                run["endedAt"] = local_now_iso()
                 run["currentPhase"] = "eval"
                 run["primaryAgentRole"] = "Evaluator"
                 run["summary"] = "Run was cancelled from the workbench."
@@ -604,7 +676,7 @@ class InMemoryStore:
         if event_type == "say" and say_type == "completion_result":
             summary = trim_text(text or "Completion result received.")
             run["status"] = "awaiting_review"
-            run["endedAt"] = utc_now()
+            run["endedAt"] = local_now_iso()
             run["currentPhase"] = "eval"
             run["primaryAgentRole"] = "Evaluator"
             run["summary"] = "Cline completed execution. Review is required before approval."
@@ -626,100 +698,106 @@ class InMemoryStore:
         self.append_event(run, event_type, trim_text(text or f"Unhandled Cline event: {event_type}"), raw=event)
 
     def _execute_cline_run(self, task_id: str, run_id: str) -> None:
-        if not CLINE_PATH:
-            return
-        task = self.get_task(task_id)
-        run = self.get_run_or_404(run_id)
-        prompt = build_cline_prompt(task, run)
-        command = [
-            CLINE_PATH,
-            "task",
-            "--json",
-            "--yolo",
-            "--cwd",
-            str(BASE_DIR),
-            prompt,
-        ]
-        with self.lock:
-            run["runner"]["commandPreview"] = " ".join(command)
-            run["summary"] = "Cline is executing the requested task."
-            self.append_event(run, "command_preview", "Cline command prepared.")
-            self.upsert_artifact(run, "command", "Cline command preview", content=" ".join(command))
-        self.publish_run_update(task_id, run_id)
         try:
-            process = subprocess.Popen(
-                command,
-                cwd=BASE_DIR,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-        except OSError as exc:
+            if not CLINE_PATH:
+                return
+            task = self.get_task(task_id)
+            run = self.get_run_or_404(run_id)
+            prompt = build_cline_prompt(task, run)
+            command = [
+                CLINE_PATH,
+                "task",
+                "--json",
+                "--yolo",
+                "--cwd",
+                str(BASE_DIR),
+                prompt,
+            ]
             with self.lock:
-                self._mark_run_failed(run_id, f"Cline failed to start: {exc}", "spawn")
-            return
-        stdout_lines: list[str] = []
-        try:
-            assert process.stdout is not None
-            for line in process.stdout:
-                raw_line = line.strip()
-                if not raw_line:
-                    continue
-                stdout_lines.append(raw_line)
-                try:
-                    event = json.loads(raw_line)
-                except json.JSONDecodeError:
+                run["runner"]["commandPreview"] = " ".join(command)
+                run["summary"] = "Cline is executing the requested task."
+                self.append_event(run, "command_preview", "Cline command prepared.")
+                self.upsert_artifact(run, "command", "Cline command preview", content=" ".join(command))
+            self.publish_run_update(task_id, run_id)
+            try:
+                process = subprocess.Popen(
+                    command,
+                    cwd=BASE_DIR,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as exc:
+                with self.lock:
+                    self._mark_run_failed(run_id, f"Cline failed to start: {exc}", "spawn")
+                self.publish_run_update(task_id, run_id)
+                return
+            stdout_lines: list[str] = []
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    raw_line = line.strip()
+                    if not raw_line:
+                        continue
+                    stdout_lines.append(raw_line)
+                    try:
+                        event = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        with self.lock:
+                            current_run = self.get_run_or_404(run_id)
+                            self.append_event(current_run, "stdout", trim_text(raw_line), raw={"line": raw_line})
+                            self.upsert_artifact(current_run, "stdout", "Cline raw stdout", content="\n".join(stdout_lines))
+                        self.publish_run_update(task_id, run_id)
+                        continue
                     with self.lock:
                         current_run = self.get_run_or_404(run_id)
-                        self.append_event(current_run, "stdout", trim_text(raw_line), raw={"line": raw_line})
-                        self.upsert_artifact(current_run, "stdout", "Cline raw stdout", content="\n".join(stdout_lines))
+                        self._update_run_from_cline_event(task_id, run_id, event)
+                        self.upsert_artifact(current_run, "event_stream", "Cline JSON event stream", content="\n".join(stdout_lines))
                     self.publish_run_update(task_id, run_id)
-                    continue
+                return_code = process.wait(timeout=CLINE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
                 with self.lock:
-                    current_run = self.get_run_or_404(run_id)
-                    self._update_run_from_cline_event(task_id, run_id, event)
-                    self.upsert_artifact(current_run, "event_stream", "Cline JSON event stream", content="\n".join(stdout_lines))
+                    self._mark_run_failed(run_id, "Cline timed out before producing a reviewable result.", "timeout")
                 self.publish_run_update(task_id, run_id)
-            return_code = process.wait(timeout=CLINE_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            with self.lock:
-                self._mark_run_failed(run_id, "Cline timed out before producing a reviewable result.", "timeout")
-            self.publish_run_update(task_id, run_id)
-            return
+                return
 
-        with self.lock:
-            current_run = self.get_run_or_404(run_id)
-            self.upsert_artifact(current_run, "event_stream", "Cline JSON event stream", content="\n".join(stdout_lines))
-            if return_code != 0:
-                self._mark_run_failed(run_id, "Cline returned a non-zero exit code.", f"exit:{return_code}")
-                self.upsert_artifact(current_run, "log", "Cline session output", content="\n".join(stdout_lines), selected=False)
-            elif current_run["status"] not in {"awaiting_review", "completed"}:
-                summary = "Cline process exited without a completion_result event."
-                current_run["status"] = "awaiting_review"
-                current_run["endedAt"] = utc_now()
-                current_run["currentPhase"] = "eval"
-                current_run["primaryAgentRole"] = "Evaluator"
-                current_run["summary"] = summary
-                current_run["verdict"] = {
-                    "decision": "review_required",
-                    "reason": summary,
-                    "risks": ["Completion semantics were inferred from process exit"],
-                    "recommendedNextAction": "approve_or_retry",
-                }
-                current_run["steps"][1]["status"] = "completed"
-                current_run["steps"][2]["status"] = "completed"
-                current_run["steps"][2]["summary"] = "Process exited cleanly without an explicit completion event."
-                self.append_event(current_run, "process_exit", summary, raw={"returnCode": return_code})
-                task = self.get_task(task_id)
-                task["latestRunStatus"] = current_run["status"]
-        self.publish_run_update(task_id, run_id)
+            with self.lock:
+                current_run = self.get_run_or_404(run_id)
+                self.upsert_artifact(current_run, "event_stream", "Cline JSON event stream", content="\n".join(stdout_lines))
+                if return_code != 0:
+                    self._mark_run_failed(run_id, "Cline returned a non-zero exit code.", f"exit:{return_code}")
+                    self.upsert_artifact(current_run, "log", "Cline session output", content="\n".join(stdout_lines), selected=False)
+                elif current_run["status"] not in {"awaiting_review", "completed"}:
+                    summary = "Cline process exited without a completion_result event."
+                    current_run["status"] = "awaiting_review"
+                    current_run["endedAt"] = local_now_iso()
+                    current_run["currentPhase"] = "eval"
+                    current_run["primaryAgentRole"] = "Evaluator"
+                    current_run["summary"] = summary
+                    current_run["verdict"] = {
+                        "decision": "review_required",
+                        "reason": summary,
+                        "risks": ["Completion semantics were inferred from process exit"],
+                        "recommendedNextAction": "approve_or_retry",
+                    }
+                    current_run["steps"][1]["status"] = "completed"
+                    current_run["steps"][2]["status"] = "completed"
+                    current_run["steps"][2]["summary"] = "Process exited cleanly without an explicit completion event."
+                    self.append_event(current_run, "process_exit", summary, raw={"returnCode": return_code})
+                    task = self.get_task(task_id)
+                    task["latestRunStatus"] = current_run["status"]
+            self.publish_run_update(task_id, run_id)
+        except Exception as exc:
+            with self.lock:
+                self._mark_run_failed(run_id, f"Unhandled executor exception: {exc}", "exception")
+            self.publish_run_update(task_id, run_id)
 
     def _mark_run_failed(self, run_id: str, reason: str, code: str) -> None:
         run = self.get_run_or_404(run_id)
         run["status"] = "failed"
-        run["endedAt"] = utc_now()
+        run["endedAt"] = local_now_iso()
         run["currentPhase"] = "eval"
         run["primaryAgentRole"] = "Evaluator"
         run["summary"] = reason
@@ -747,7 +825,6 @@ def build_cline_prompt(task: dict[str, Any], run: dict[str, Any]) -> str:
     return (
         "You are operating inside the KanbanWithCline workbench.\n"
         f"Task title: {task['title']}\n"
-        f"Task type: {task['type']}\n"
         f"Goal: {task['goal']}\n"
         f"Mode: {run['mode']}\n"
         "Constraints:\n"
@@ -768,10 +845,36 @@ def build_cline_command_preview(task: dict[str, Any], mode: str) -> str | None:
 
 broadcaster = RunEventBroadcaster()
 run_logger = RunJsonlLogger(RUN_LOG_DIR, max_files=MAX_RUN_LOG_FILES)
+system_logger = SystemJsonlLogger(SYSTEM_LOG_DIR, max_files=MAX_RUN_LOG_FILES)
 store = InMemoryStore()
 store.set_publisher(broadcaster)
 store.set_logger(run_logger)
 app = FastAPI()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    reconciled = run_logger.reconcile_orphaned_runs()
+    system_logger.append(
+        "server_start",
+        "Workbench server started.",
+        payload={"reconciledOrphanedLogs": reconciled, "runLogDir": str(RUN_LOG_DIR)},
+    )
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    active_runs = [
+        {"taskId": task_id, "runId": run["id"], "status": run["status"]}
+        for task_id, runs in store.runs_by_task_id.items()
+        for run in runs
+        if run["status"] in {"running", "revising"}
+    ]
+    system_logger.append(
+        "server_shutdown",
+        "Workbench server stopped.",
+        payload={"activeRuns": active_runs},
+    )
 
 
 @app.get("/api/meta")
