@@ -23,6 +23,8 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 RUN_LOG_DIR = BASE_DIR / "logs" / "runs"
 SYSTEM_LOG_DIR = BASE_DIR / "logs" / "system"
+STATE_DIR = BASE_DIR / "logs" / "state"
+STATE_PATH = STATE_DIR / "workbench-state.json"
 CLINE_PATH = which("cline")
 CLINE_TIMEOUT_SECONDS = 120
 MAX_RUN_LOG_FILES = 5
@@ -103,6 +105,85 @@ def summarize_tool_payload(payload: dict[str, Any] | None, fallback_text: str) -
         return f"Listed files: {trim_text(str(path or payload.get('directoryPath') or '/'), limit=120)}", "list"
 
     return f"{tool_name}: {trim_text(str(path or fallback_text), limit=120)}", "tool_trace"
+
+
+def summarize_evidence(run: dict[str, Any], *, limit: int = 4) -> list[str]:
+    evidence: list[str] = []
+    verdict = run.get("verdict") or {}
+    if verdict.get("reason"):
+        evidence.append(f"Verdict: {trim_text(str(verdict['reason']), limit=180)}")
+    for event in reversed(run.get("events", [])):
+        summary = event.get("summary")
+        if not summary:
+            continue
+        evidence.append(f"{event.get('type', 'event')}: {trim_text(str(summary), limit=180)}")
+        if len(evidence) >= limit:
+            break
+    return evidence
+
+
+def infer_failure_analysis(run: dict[str, Any], *, code: str | None = None, reason: str | None = None) -> dict[str, Any] | None:
+    status = run.get("status")
+    verdict = run.get("verdict") or {}
+    summary = reason or verdict.get("reason") or run.get("summary") or ""
+    if status not in {"failed", "cancelled", "orphaned"} and verdict.get("decision") not in {"retry", "cancelled"}:
+        return None
+
+    lowered = summary.lower()
+    failure_stage = run.get("currentPhase") or "eval"
+    failure_type = "evaluation_failure"
+    skill_gap = "failure-analysis"
+    root_cause = "The run ended without a satisfactory verified outcome."
+    recommended_fix = "Review the evaluator findings, update the task instructions, and retry with the missing guardrails."
+    skill_seed = "Create a post-run evaluator skill that turns repeated failures into reusable checks."
+
+    if status == "orphaned" or "orphan" in lowered:
+        failure_stage = "execute"
+        failure_type = "orphaned"
+        skill_gap = "run-resume-recovery"
+        root_cause = "The worker or server stopped before the run emitted a terminal result."
+        recommended_fix = "Persist progress checkpoints and provide a resume or cleanup path for interrupted runs."
+        skill_seed = "Create a recovery skill that reconstructs interrupted work from the latest artifacts and events."
+    elif "timeout" in lowered:
+        failure_stage = "execute"
+        failure_type = "timeout"
+        skill_gap = "long-running-task-chunking"
+        root_cause = "The executor did not finish within the allotted window."
+        recommended_fix = "Split the task into smaller milestones or increase timeout only when evidence supports it."
+        skill_seed = "Create a chunking skill that decomposes long tasks before execution."
+    elif "non-zero exit" in lowered or (code and code.startswith("exit:")):
+        failure_stage = "execute"
+        failure_type = "tool_error"
+        skill_gap = "command-hardening"
+        root_cause = "The external tool invocation failed before a reviewable result was produced."
+        recommended_fix = "Capture command stderr, validate prerequisites, and add retry logic only for safe transient failures."
+        skill_seed = "Create a command hardening skill that validates preconditions and captures actionable stderr."
+    elif "missing" in lowered or "requirement" in lowered or "review" in lowered:
+        failure_stage = "eval"
+        failure_type = "missing_requirement"
+        skill_gap = "acceptance-criteria-enforcement"
+        root_cause = "The run produced output, but the evaluator found unmet requirements."
+        recommended_fix = "Inject the acceptance criteria as an execution checklist and verify them before completion."
+        skill_seed = "Create an AC checklist skill that validates deliverables before completion is emitted."
+    elif status == "cancelled":
+        failure_stage = "approval"
+        failure_type = "cancelled"
+        skill_gap = "human-in-the-loop-handoff"
+        root_cause = "The run was stopped before it reached a reviewable terminal state."
+        recommended_fix = "Capture the partial state and require a restart note so the next run resumes with context."
+        skill_seed = "Create a cancellation handoff skill that summarizes partial progress before termination."
+
+    return {
+        "failureStage": failure_stage,
+        "failureType": failure_type,
+        "failureReason": trim_text(summary or "Failure reason unavailable.", limit=240),
+        "evidence": summarize_evidence(run),
+        "rootCauseHypothesis": root_cause,
+        "recommendedFix": recommended_fix,
+        "skillGap": skill_gap,
+        "skillSeed": skill_seed,
+        "updatedAt": local_now_iso(),
+    }
 
 
 class RunEventBroadcaster:
@@ -269,8 +350,9 @@ class RunAction(BaseModel):
 
 
 class InMemoryStore:
-    def __init__(self) -> None:
+    def __init__(self, *, state_path: Path) -> None:
         self.lock = threading.RLock()
+        self.state_path = state_path
         self.tasks: list[dict[str, Any]] = []
         self.runs_by_task_id: dict[str, list[dict[str, Any]]] = {}
         self.publisher: RunEventBroadcaster | None = None
@@ -280,6 +362,68 @@ class InMemoryStore:
     def _seed(self) -> None:
         self.tasks = []
         self.runs_by_task_id = {}
+
+    def load_state(self) -> None:
+        with self.lock:
+            if not self.state_path.exists():
+                self._seed()
+                return
+            try:
+                payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                self._seed()
+                return
+            tasks = payload.get("tasks")
+            runs_by_task_id = payload.get("runsByTaskId")
+            if not isinstance(tasks, list) or not isinstance(runs_by_task_id, dict):
+                self._seed()
+                return
+            self.tasks = tasks
+            self.runs_by_task_id = {
+                task_id: runs if isinstance(runs, list) else []
+                for task_id, runs in runs_by_task_id.items()
+            }
+
+    def save_state(self) -> None:
+        with self.lock:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "savedAt": local_now_iso(),
+                "tasks": self.tasks,
+                "runsByTaskId": self.runs_by_task_id,
+            }
+            self.state_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+    def reconcile_in_memory_runs_after_restart(self) -> list[str]:
+        reconciled: list[str] = []
+        with self.lock:
+            for task in self.tasks:
+                runs = self.runs_by_task_id.get(task["id"], [])
+                for run in runs:
+                    if run.get("status") not in {"running", "revising"}:
+                        continue
+                    run["status"] = "orphaned"
+                    run["endedAt"] = local_now_iso()
+                    run["currentPhase"] = "eval"
+                    run["primaryAgentRole"] = "Evaluator"
+                    run["summary"] = "Run was interrupted before completion and needs review or retry."
+                    run["verdict"] = {
+                        "decision": "retry",
+                        "reason": "The server restarted or the worker stopped before completion.",
+                        "risks": ["Execution stopped mid-stream and may have partial artifacts only"],
+                        "recommendedNextAction": "retry_or_reopen",
+                    }
+                    run["failureAnalysis"] = infer_failure_analysis(run, reason=run["verdict"]["reason"])
+                    if len(run.get("steps", [])) > 1:
+                        run["steps"][1]["status"] = "failed"
+                    if len(run.get("steps", [])) > 2:
+                        run["steps"][2]["status"] = "completed"
+                        run["steps"][2]["summary"] = "Run marked orphaned during server recovery."
+                    self.append_event(run, "orphaned_run", "Run was interrupted while the server restarted or the worker exited.")
+                    task["latestRunStatus"] = run["status"]
+                    reconciled.append(run["id"])
+            if reconciled:
+                self.save_state()
 
     def _step(self, phase: str, agent_role: str, status: str, summary: str) -> dict[str, Any]:
         return {
@@ -360,10 +504,12 @@ class InMemoryStore:
                     "risks": ["Context may still be incomplete"],
                     "recommendedNextAction": "start_run",
                 },
+                "failureAnalysis": None,
             }
             self.tasks.insert(0, task)
             self.runs_by_task_id[task_id] = [run]
             created_task = deepcopy(task)
+            self.save_state()
         self.log_run_record(task_id, run_id, "run_created", message="Task and initial draft run created.")
         self.publish_run_update(task_id, run_id)
         return created_task
@@ -405,6 +551,7 @@ class InMemoryStore:
     def append_event(self, run: dict[str, Any], event_type: str, summary: str, *, raw: dict[str, Any] | None = None) -> None:
         run.setdefault("events", []).append(self._event(event_type, summary, raw=raw))
         run["events"] = run["events"][-40:]
+        self.save_state()
         self.log_run_record(
             run["taskId"],
             run["id"],
@@ -429,6 +576,7 @@ class InMemoryStore:
             existing["path"] = path
             existing["selected"] = selected
             existing["createdAt"] = local_now_iso()
+            self.save_state()
             self.log_run_record(
                 run["taskId"],
                 run["id"],
@@ -438,6 +586,7 @@ class InMemoryStore:
             )
             return
         run["artifacts"].append(self._artifact(artifact_type, title, path, selected=selected, content=content))
+        self.save_state()
         self.log_run_record(
             run["taskId"],
             run["id"],
@@ -489,6 +638,7 @@ class InMemoryStore:
             "run": deepcopy(run),
             "artifacts": deepcopy(run["artifacts"]),
             "verdict": deepcopy(run["verdict"]),
+            "failureAnalysis": deepcopy(run.get("failureAnalysis")),
         }
 
     def publish_run_update(self, task_id: str, run_id: str) -> None:
@@ -549,10 +699,12 @@ class InMemoryStore:
                     "risks": ["Fresh evidence has not been reviewed yet"],
                     "recommendedNextAction": "continue_run",
                 },
+                "failureAnalysis": None,
             }
             self.runs_by_task_id.setdefault(task_id, []).insert(0, run)
             task["latestRunId"] = run_id
             task["latestRunStatus"] = status
+            self.save_state()
         self.log_run_record(task_id, run_id, "run_created", message=f"Run created via action={payload.action}.")
         if payload.useCline and CLINE_PATH:
             self.start_cline_run(task_id, run_id)
@@ -575,6 +727,7 @@ class InMemoryStore:
                     "risks": ["Manual approval does not guarantee downstream merge readiness"],
                     "recommendedNextAction": "approved",
                 }
+                run["failureAnalysis"] = None
                 if run["steps"]:
                     run["steps"][-1]["status"] = "completed"
                     run["steps"][-1]["summary"] = "User approved the run."
@@ -590,6 +743,7 @@ class InMemoryStore:
                     "risks": ["Previous artifacts may now be stale"],
                     "recommendedNextAction": "start_run",
                 }
+                run["failureAnalysis"] = None
                 run["steps"] = [self._step("plan", "Planner", "pending", "Planning will resume when the task is started again.")]
             else:
                 run["status"] = "cancelled"
@@ -603,9 +757,11 @@ class InMemoryStore:
                     "risks": ["Partial artifacts may not be actionable"],
                     "recommendedNextAction": "retry",
                 }
+                run["failureAnalysis"] = infer_failure_analysis(run)
             task["latestRunId"] = run["id"]
             task["latestRunStatus"] = run["status"]
             patched_run = deepcopy(run)
+            self.save_state()
         self.log_run_record(
             patched_run["taskId"],
             patched_run["id"],
@@ -615,6 +771,20 @@ class InMemoryStore:
         )
         self.publish_run_update(patched_run["taskId"], patched_run["id"])
         return patched_run
+
+    def delete_task(self, task_id: str) -> None:
+        with self.lock:
+            task = self.get_task(task_id)
+            self.tasks = [item for item in self.tasks if item["id"] != task_id]
+            removed_runs = self.runs_by_task_id.pop(task_id, [])
+            self.save_state()
+        self.log_run_record(
+            task_id,
+            task.get("latestRunId") or "deleted",
+            "task_deleted",
+            message=f"Deleted task {task_id}.",
+            payload={"runCount": len(removed_runs)},
+        )
 
     def start_cline_run(self, task_id: str, run_id: str) -> None:
         thread = threading.Thread(target=self._execute_cline_run, args=(task_id, run_id), daemon=True)
@@ -686,6 +856,7 @@ class InMemoryStore:
                 "risks": ["CLI output may still need manual validation"],
                 "recommendedNextAction": "approve_or_retry",
             }
+            run["failureAnalysis"] = None
             run["steps"][1]["status"] = "completed"
             run["steps"][1]["summary"] = summary
             run["steps"][2]["status"] = "completed"
@@ -782,6 +953,7 @@ class InMemoryStore:
                         "risks": ["Completion semantics were inferred from process exit"],
                         "recommendedNextAction": "approve_or_retry",
                     }
+                    current_run["failureAnalysis"] = infer_failure_analysis(current_run, reason=summary)
                     current_run["steps"][1]["status"] = "completed"
                     current_run["steps"][2]["status"] = "completed"
                     current_run["steps"][2]["summary"] = "Process exited cleanly without an explicit completion event."
@@ -807,6 +979,7 @@ class InMemoryStore:
             "risks": ["No accepted artifact was produced"],
             "recommendedNextAction": "retry",
         }
+        run["failureAnalysis"] = infer_failure_analysis(run, code=code, reason=reason)
         if len(run["steps"]) > 1:
             run["steps"][1]["status"] = "failed"
             run["steps"][1]["summary"] = reason
@@ -846,7 +1019,7 @@ def build_cline_command_preview(task: dict[str, Any], mode: str) -> str | None:
 broadcaster = RunEventBroadcaster()
 run_logger = RunJsonlLogger(RUN_LOG_DIR, max_files=MAX_RUN_LOG_FILES)
 system_logger = SystemJsonlLogger(SYSTEM_LOG_DIR, max_files=MAX_RUN_LOG_FILES)
-store = InMemoryStore()
+store = InMemoryStore(state_path=STATE_PATH)
 store.set_publisher(broadcaster)
 store.set_logger(run_logger)
 app = FastAPI()
@@ -854,11 +1027,18 @@ app = FastAPI()
 
 @app.on_event("startup")
 def on_startup() -> None:
+    store.load_state()
+    recovered_runs = store.reconcile_in_memory_runs_after_restart()
     reconciled = run_logger.reconcile_orphaned_runs()
     system_logger.append(
         "server_start",
         "Workbench server started.",
-        payload={"reconciledOrphanedLogs": reconciled, "runLogDir": str(RUN_LOG_DIR)},
+        payload={
+            "reconciledOrphanedLogs": reconciled,
+            "recoveredRuns": recovered_runs,
+            "runLogDir": str(RUN_LOG_DIR),
+            "statePath": str(STATE_PATH),
+        },
     )
 
 
@@ -886,6 +1066,7 @@ def get_meta() -> dict[str, Any]:
         "statusGroups": {key: sorted(value) for key, value in RUN_STATUS_GROUPS.items()},
         "streaming": {"sse": True},
         "runLogs": {"dir": str(RUN_LOG_DIR), "maxFiles": MAX_RUN_LOG_FILES},
+        "state": {"path": str(STATE_PATH)},
     }
 
 
@@ -921,6 +1102,11 @@ def list_tasks() -> list[dict[str, Any]]:
 @app.post("/api/tasks")
 def create_task(payload: TaskCreate) -> dict[str, Any]:
     return store.create_task(payload)
+
+
+@app.delete("/api/tasks/{task_id}", status_code=204)
+def delete_task(task_id: str) -> None:
+    store.delete_task(task_id)
 
 
 @app.get("/api/tasks/{task_id}/runs")

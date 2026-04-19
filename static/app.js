@@ -51,6 +51,7 @@ const retryBtn = document.getElementById("retryBtn");
 const reopenBtn = document.getElementById("reopenBtn");
 const approveBtn = document.getElementById("approveBtn");
 const cancelRunBtn = document.getElementById("cancelRunBtn");
+const deleteTaskBtn = document.getElementById("deleteTaskBtn");
 const taskTitleInput = document.getElementById("taskTitleInput");
 const taskGoalInput = document.getElementById("taskGoalInput");
 const taskConstraintsInput = document.getElementById("taskConstraintsInput");
@@ -114,6 +115,7 @@ function bindEvents() {
     reopenBtn.addEventListener("click", () => patchRun("reopen"));
     approveBtn.addEventListener("click", () => patchRun("approve"));
     cancelRunBtn.addEventListener("click", () => patchRun("cancel"));
+    deleteTaskBtn.addEventListener("click", deleteSelectedTask);
 }
 
 function connectRunStream() {
@@ -360,6 +362,43 @@ async function patchRun(action) {
     }
 }
 
+async function deleteSelectedTask() {
+    const task = getSelectedTask();
+    if (!task) {
+        return;
+    }
+
+    const run = getLatestRun(task);
+    if (["running", "revising"].includes(run?.status)) {
+        window.alert("Active runs cannot be deleted. Cancel or let them finish first.");
+        return;
+    }
+
+    const confirmed = window.confirm(`Delete task "${task.title}" and its run history from the board?`);
+    if (!confirmed) {
+        return;
+    }
+
+    state.ui.actionPending = true;
+    renderWorkbench();
+
+    try {
+        await api(`/api/tasks/${task.id}`, { method: "DELETE" });
+        removeTaskFromState(task.id);
+        syncSelectionAfterBoardLoad();
+        if (state.selectedTaskId) {
+            await loadTaskDetail(state.selectedTaskId);
+        }
+        state.ui.error = "";
+    } catch (error) {
+        state.ui.error = `Task deletion failed: ${error.message}`;
+        renderBanner();
+    } finally {
+        state.ui.actionPending = false;
+        renderWorkbench();
+    }
+}
+
 async function pollActiveRuns() {
     if (state.stream.connected) {
         return;
@@ -539,13 +578,14 @@ function renderDetailPanel() {
         renderTimeline([]);
         renderEvents([]);
         renderArtifacts([]);
-        renderVerdict(null);
+        renderEvaluation(null, null);
         syncActionState(null);
         return;
     }
 
     const verdict = state.verdictsByRunId[run.id] || run.verdict;
     const artifacts = state.artifactsByRunId[run.id] || run.artifacts || [];
+    const failureAnalysis = run.failureAnalysis || null;
 
     if (run.status === "orphaned" && (!verdict || verdict.decision === "pending")) {
         verdict.reason = verdict.reason || "This run was interrupted while the server restarted or the worker exited.";
@@ -566,7 +606,7 @@ function renderDetailPanel() {
     renderTimeline(run.steps || []);
     renderEvents(run.events || []);
     renderArtifacts(artifacts);
-    renderVerdict(verdict);
+    renderEvaluation(verdict, failureAnalysis);
     syncActionState(run.status);
 }
 
@@ -658,7 +698,7 @@ function renderEvents(events) {
         return;
     }
 
-    [...events].reverse().slice(0, 12).forEach((event) => {
+    [...events].reverse().slice(0, 20).forEach((event) => {
         const item = document.createElement("article");
         item.className = "event-item";
         item.innerHTML = `
@@ -709,11 +749,18 @@ function shouldRenderArtifactInScrollBox(artifact) {
     return isInlineArtifact || lineCount > ARTIFACT_SCROLL_LINE_THRESHOLD || artifact.content.length > ARTIFACT_SCROLL_CHAR_THRESHOLD;
 }
 
-function renderVerdict(verdict) {
+function renderEvaluation(verdict, failureAnalysis) {
     document.getElementById("detailVerdictDecision").textContent = verdict?.decision || "pending";
     document.getElementById("detailVerdictAction").textContent = (verdict?.recommendedNextAction || "waiting").replaceAll("_", " ");
     document.getElementById("detailVerdictReason").textContent = verdict?.reason || "No verdict available yet.";
     renderRisks(verdict?.risks || []);
+    document.getElementById("detailFailureStage").textContent = formatFailureValue(failureAnalysis?.failureStage);
+    document.getElementById("detailFailureType").textContent = formatFailureValue(failureAnalysis?.failureType);
+    document.getElementById("detailFailureRootCause").textContent = failureAnalysis?.rootCauseHypothesis || "No failure analysis recorded.";
+    document.getElementById("detailFailureFix").textContent = failureAnalysis?.recommendedFix || "No remediation guidance recorded.";
+    document.getElementById("detailSkillGap").textContent = formatFailureValue(failureAnalysis?.skillGap);
+    document.getElementById("detailSkillSeed").textContent = failureAnalysis?.skillSeed || "No skill candidate recorded.";
+    renderFailureEvidence(failureAnalysis?.evidence || []);
 }
 
 function renderRisks(risks) {
@@ -733,6 +780,26 @@ function renderRisks(risks) {
     });
 }
 
+function renderFailureEvidence(evidence) {
+    const container = document.getElementById("detailFailureEvidence");
+    container.innerHTML = "";
+
+    if (!evidence.length) {
+        container.innerHTML = '<span class="risk-pill">No structured evidence recorded</span>';
+        return;
+    }
+
+    evidence.forEach((entry) => {
+        const item = document.createElement("article");
+        item.className = "artifact-item";
+        item.innerHTML = `
+            <span class="fact-label">Evidence</span>
+            <p>${escapeHtml(entry)}</p>
+        `;
+        container.appendChild(item);
+    });
+}
+
 function syncActionState(status) {
     const disabled = state.ui.actionPending || state.ui.loadingDetail;
     retryBtn.textContent = getPrimaryRunActionLabel(status);
@@ -740,6 +807,7 @@ function syncActionState(status) {
     reopenBtn.disabled = disabled;
     approveBtn.disabled = disabled;
     cancelRunBtn.disabled = disabled;
+    deleteTaskBtn.disabled = disabled;
 
     if (!status) {
         retryBtn.textContent = "Start Run";
@@ -747,6 +815,7 @@ function syncActionState(status) {
         reopenBtn.disabled = true;
         approveBtn.disabled = true;
         cancelRunBtn.disabled = true;
+        deleteTaskBtn.disabled = false;
         return;
     }
 
@@ -758,6 +827,7 @@ function syncActionState(status) {
     if (status === "running" || status === "revising") {
         approveBtn.disabled = true;
         reopenBtn.disabled = true;
+        deleteTaskBtn.disabled = true;
     }
 
     if (status === "completed") {
@@ -769,6 +839,7 @@ function syncActionState(status) {
         reopenBtn.disabled = false;
         cancelRunBtn.disabled = true;
         approveBtn.disabled = true;
+        deleteTaskBtn.disabled = false;
     }
 }
 
@@ -828,6 +899,15 @@ function getSelectedRun() {
     return runs.find((run) => run.id === selectedRunId) || getLatestRun(task);
 }
 
+function removeTaskFromState(taskId) {
+    state.tasks = state.tasks.filter((task) => task.id !== taskId);
+    delete state.runsByTaskId[taskId];
+    delete state.selectedRunIdByTaskId[taskId];
+    if (state.selectedTaskId === taskId) {
+        state.selectedTaskId = null;
+    }
+}
+
 function getStatusGroup(status) {
     return Object.entries(BOARD_GROUPS).find(([, statuses]) => statuses.includes(status))?.[0] || "queue";
 }
@@ -845,6 +925,13 @@ function getRoleClass(role) {
 
 function formatStatus(status) {
     return status.replaceAll("_", " ");
+}
+
+function formatFailureValue(value) {
+    if (!value) {
+        return "-";
+    }
+    return value.replaceAll("_", " ");
 }
 
 function formatDate(value) {

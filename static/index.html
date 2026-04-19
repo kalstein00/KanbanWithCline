@@ -190,6 +190,7 @@
                                     <button class="btn primary-ghost" id="reopenBtn">Reopen</button>
                                     <button class="btn primary" id="approveBtn">Approve</button>
                                     <button class="btn subtle" id="cancelRunBtn">Cancel</button>
+                                    <button class="btn danger" id="deleteTaskBtn">Delete Task</button>
                                 </div>
                             </section>
 
@@ -209,21 +210,14 @@
 
                             <section class="detail-section">
                                 <div class="section-heading">
-                                    <h4>Live Events</h4>
+                                    <h4>Progress Timeline</h4>
                                 </div>
                                 <div class="event-list" id="eventList"></div>
                             </section>
 
                             <section class="detail-section">
                                 <div class="section-heading">
-                                    <h4>Artifacts</h4>
-                                </div>
-                                <div class="artifact-list" id="artifactList"></div>
-                            </section>
-
-                            <section class="detail-section">
-                                <div class="section-heading">
-                                    <h4>Verdict</h4>
+                                    <h4>Evaluation And Failure</h4>
                                 </div>
                                 <div class="verdict-card">
                                     <div class="verdict-header">
@@ -232,7 +226,41 @@
                                     </div>
                                     <p class="detail-copy" id="detailVerdictReason"></p>
                                     <div class="risk-list" id="detailVerdictRisks"></div>
+                                    <div class="evaluation-grid">
+                                        <article class="evaluation-item">
+                                            <span class="fact-label">Failure Stage</span>
+                                            <strong id="detailFailureStage">-</strong>
+                                        </article>
+                                        <article class="evaluation-item">
+                                            <span class="fact-label">Failure Type</span>
+                                            <strong id="detailFailureType">-</strong>
+                                        </article>
+                                        <article class="evaluation-item evaluation-item-wide">
+                                            <span class="fact-label">Root Cause Hypothesis</span>
+                                            <p class="detail-copy" id="detailFailureRootCause">No failure analysis recorded.</p>
+                                        </article>
+                                        <article class="evaluation-item evaluation-item-wide">
+                                            <span class="fact-label">Recommended Fix</span>
+                                            <p class="detail-copy" id="detailFailureFix">No remediation guidance recorded.</p>
+                                        </article>
+                                        <article class="evaluation-item evaluation-item-wide">
+                                            <span class="fact-label">Skill Gap</span>
+                                            <strong id="detailSkillGap">-</strong>
+                                        </article>
+                                        <article class="evaluation-item evaluation-item-wide">
+                                            <span class="fact-label">Skill Seed</span>
+                                            <p class="detail-copy" id="detailSkillSeed">No skill candidate recorded.</p>
+                                        </article>
+                                    </div>
+                                    <div class="artifact-list" id="detailFailureEvidence"></div>
                                 </div>
+                            </section>
+
+                            <section class="detail-section">
+                                <div class="section-heading">
+                                    <h4>Artifacts</h4>
+                                </div>
+                                <div class="artifact-list" id="artifactList"></div>
                             </section>
                         </div>
                     </aside>
