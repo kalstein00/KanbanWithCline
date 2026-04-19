@@ -68,6 +68,8 @@
                             <option value="prd_generation">PRD Generation</option>
                             <option value="debugging">Debugging</option>
                             <option value="test_writing">Test Writing</option>
+                            <option value="code_review">Code Review</option>
+                            <option value="refactor_planning">Refactor Planning</option>
                         </select>
                     </label>
                     <label class="filter-field">
@@ -103,6 +105,8 @@
                         <button id="addTaskBtn" class="btn primary-ghost">+ Initiate Task</button>
                     </div>
                 </header>
+
+                <div id="globalBanner" class="banner hidden"></div>
 
                 <div class="board-and-panel">
                     <div class="kanban-board" id="kanbanBoard">
@@ -161,7 +165,7 @@
 
                             <section class="detail-section">
                                 <div class="section-heading">
-                                    <h4>Latest Run</h4>
+                                    <h4>Run Snapshot</h4>
                                     <span class="status-badge" id="detailRunStatus">running</span>
                                 </div>
                                 <div class="run-facts">
@@ -173,7 +177,26 @@
                                         <span class="fact-label">Started</span>
                                         <strong id="detailRunStartedAt"></strong>
                                     </div>
+                                    <div>
+                                        <span class="fact-label">Runner</span>
+                                        <strong id="detailRunProvider"></strong>
+                                    </div>
                                 </div>
+                                <p class="detail-copy" id="detailRunSummary"></p>
+                                <div class="runner-card">
+                                    <div class="section-heading">
+                                        <span class="fact-label">Cline Executor</span>
+                                        <span class="meta-pill" id="clineAvailability">checking</span>
+                                    </div>
+                                    <p class="detail-copy" id="detailRunCommand"></p>
+                                </div>
+                            </section>
+
+                            <section class="detail-section">
+                                <div class="section-heading">
+                                    <h4>Run History</h4>
+                                </div>
+                                <div class="run-history-list" id="runHistoryList"></div>
                             </section>
 
                             <section class="detail-section">
@@ -212,6 +235,7 @@
                                     <button class="btn secondary" id="retryBtn">Retry</button>
                                     <button class="btn primary-ghost" id="reopenBtn">Reopen</button>
                                     <button class="btn primary" id="approveBtn">Approve</button>
+                                    <button class="btn subtle" id="cancelRunBtn">Cancel</button>
                                 </div>
                             </section>
                         </div>
@@ -236,11 +260,17 @@
                         <option value="prd_generation">PRD Generation</option>
                         <option value="debugging">Debugging</option>
                         <option value="test_writing">Test Writing</option>
+                        <option value="code_review">Code Review</option>
+                        <option value="refactor_planning">Refactor Planning</option>
                     </select>
                 </label>
                 <label class="input-group">
                     <span>Goal</span>
                     <textarea id="taskGoalInput" rows="4" placeholder="Define the outcome the agents should achieve."></textarea>
+                </label>
+                <label class="input-group">
+                    <span>Constraints</span>
+                    <textarea id="taskConstraintsInput" rows="3" placeholder="One constraint per line."></textarea>
                 </label>
                 <label class="input-group">
                     <span>Mode</span>
@@ -249,6 +279,18 @@
                         <option value="single-agent">Single Agent</option>
                         <option value="debate">Debate</option>
                     </select>
+                </label>
+                <label class="input-group">
+                    <span>Priority</span>
+                    <select id="taskPriorityInput">
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="low">Low</option>
+                    </select>
+                </label>
+                <label class="input-group">
+                    <span>Related Paths</span>
+                    <textarea id="taskPathsInput" rows="3" placeholder="One file or directory path per line."></textarea>
                 </label>
             </div>
             <div class="modal-actions">

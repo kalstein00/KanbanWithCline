@@ -1,272 +1,406 @@
-/**
- * The Orchestrator's Lens: task + latestRun workbench mock
- */
-
 const BOARD_GROUPS = {
-    queue: ['draft', 'planned'],
-    stream: ['running', 'awaiting_review', 'revising'],
-    synthesis: ['completed', 'failed', 'cancelled']
+    queue: ["draft", "planned"],
+    stream: ["running", "awaiting_review", "revising"],
+    synthesis: ["completed", "failed", "cancelled"],
 };
 
 const TYPE_LABELS = {
-    document_analysis: 'Document Analysis',
-    prd_generation: 'PRD Generation',
-    debugging: 'Debugging',
-    test_writing: 'Test Writing'
+    document_analysis: "Document Analysis",
+    prd_generation: "PRD Generation",
+    debugging: "Debugging",
+    test_writing: "Test Writing",
+    code_review: "Code Review",
+    refactor_planning: "Refactor Planning",
 };
 
 const MODE_LABELS = {
-    'plan-execute-eval': 'Planner -> Executor -> Evaluator',
-    'single-agent': 'Single Agent',
-    'debate': 'Debate'
+    "plan-execute-eval": "Planner -> Executor -> Evaluator",
+    "single-agent": "Single Agent",
+    debate: "Debate",
 };
 
 const state = {
-    tasks: [
-        {
-            id: 'task_001',
-            title: 'Legacy design docs to product PRD conversion',
-            type: 'prd_generation',
-            goal: 'Analyze the existing concept docs and produce a product PRD with explicit run and artifact models.',
-            constraints: ['Keep the current visual language', 'Preserve MVP scope'],
-            priority: 'high',
-            createdAt: '2026-04-18T09:10:00Z',
-            latestRunId: 'run_001',
-            latestRunStatus: 'awaiting_review'
-        },
-        {
-            id: 'task_002',
-            title: 'FastAPI 500 error root cause isolation',
-            type: 'debugging',
-            goal: 'Reproduce the failure, isolate the root cause, and recommend the lowest-risk fix path.',
-            constraints: ['Do not mutate production data'],
-            priority: 'high',
-            createdAt: '2026-04-18T09:45:00Z',
-            latestRunId: 'run_002',
-            latestRunStatus: 'running'
-        },
-        {
-            id: 'task_003',
-            title: 'Service layer regression test coverage',
-            type: 'test_writing',
-            goal: 'Add missing tests around edge-case validation paths and failure responses.',
-            constraints: ['Avoid snapshot tests'],
-            priority: 'medium',
-            createdAt: '2026-04-18T10:05:00Z',
-            latestRunId: 'run_003',
-            latestRunStatus: 'completed'
-        },
-        {
-            id: 'task_004',
-            title: 'Architecture notes ingestion plan',
-            type: 'document_analysis',
-            goal: 'Summarize architecture notes and identify unresolved assumptions before implementation starts.',
-            constraints: ['Call out open issues explicitly'],
-            priority: 'medium',
-            createdAt: '2026-04-18T10:20:00Z',
-            latestRunId: 'run_004',
-            latestRunStatus: 'planned'
-        }
-    ],
-    runsByTaskId: {
-        task_001: [
-            {
-                id: 'run_001',
-                taskId: 'task_001',
-                mode: 'plan-execute-eval',
-                status: 'awaiting_review',
-                startedAt: '2026-04-18T09:15:00Z',
-                currentPhase: 'eval',
-                primaryAgentRole: 'Evaluator',
-                summary: 'Evaluator flagged missing task-run relationship definitions and API path ambiguity.',
-                steps: [
-                    { id: 'step_001', phase: 'plan', agentRole: 'Planner', status: 'completed', summary: 'Mapped legacy docs into product and frontend workstreams.' },
-                    { id: 'step_002', phase: 'execute', agentRole: 'Cline Executor', status: 'completed', summary: 'Drafted product and frontend PRD documents.' },
-                    { id: 'step_003', phase: 'eval', agentRole: 'Evaluator', status: 'completed', summary: 'Requested clearer ownership for task, run, artifact, and verdict entities.' }
-                ],
-                artifacts: [
-                    { id: 'artifact_001', type: 'document', title: 'PRODUCT-PRD.md', path: 'doc/PRODUCT-PRD.md', selected: true },
-                    { id: 'artifact_002', type: 'document', title: 'FRONTEND.md', path: 'doc/FRONTEND.md', selected: false }
-                ],
-                verdict: {
-                    decision: 'revise',
-                    reason: 'The document structure is sound, but task-run ownership and endpoint semantics need to be locked before implementation.',
-                    risks: ['Frontend and backend may diverge on status ownership', 'Retry and approval actions remain underspecified'],
-                    recommendedNextAction: 'retry_with_critique'
-                }
-            }
-        ],
-        task_002: [
-            {
-                id: 'run_002',
-                taskId: 'task_002',
-                mode: 'debate',
-                status: 'running',
-                startedAt: '2026-04-18T09:52:00Z',
-                currentPhase: 'execute',
-                primaryAgentRole: 'Cline Executor',
-                summary: 'Executor is tracing request lifecycles while a parallel evaluator watches for regression risks.',
-                steps: [
-                    { id: 'step_004', phase: 'plan', agentRole: 'Planner', status: 'completed', summary: 'Generated two likely causes around serialization and dependency injection.' },
-                    { id: 'step_005', phase: 'execute', agentRole: 'Cline Executor', status: 'running', summary: 'Inspecting server logs and reproducing the error against a local fixture.' },
-                    { id: 'step_006', phase: 'eval', agentRole: 'Evaluator', status: 'pending', summary: 'Waiting for the executor patch candidate.' }
-                ],
-                artifacts: [
-                    { id: 'artifact_003', type: 'log', title: 'uvicorn trace summary', path: 'logs/debug-trace.md', selected: true }
-                ],
-                verdict: {
-                    decision: 'pending',
-                    reason: 'Execution is still underway.',
-                    risks: ['Root cause not confirmed yet'],
-                    recommendedNextAction: 'continue_run'
-                }
-            }
-        ],
-        task_003: [
-            {
-                id: 'run_003',
-                taskId: 'task_003',
-                mode: 'plan-execute-eval',
-                status: 'completed',
-                startedAt: '2026-04-18T10:07:00Z',
-                currentPhase: 'eval',
-                primaryAgentRole: 'Evaluator',
-                summary: 'Tests cover success, validation failure, and invalid state transitions.',
-                steps: [
-                    { id: 'step_007', phase: 'plan', agentRole: 'Planner', status: 'completed', summary: 'Outlined core scenarios and edge cases.' },
-                    { id: 'step_008', phase: 'execute', agentRole: 'Cline Executor', status: 'completed', summary: 'Added unit tests for validation and failure branches.' },
-                    { id: 'step_009', phase: 'eval', agentRole: 'Evaluator', status: 'completed', summary: 'Approved result after checking missing flaky patterns.' }
-                ],
-                artifacts: [
-                    { id: 'artifact_004', type: 'test', title: 'service_test.py patch', path: 'tests/service_test.py', selected: true }
-                ],
-                verdict: {
-                    decision: 'approved',
-                    reason: 'The selected artifact meets the required test coverage and risk profile.',
-                    risks: ['Future schema changes may require fixture updates'],
-                    recommendedNextAction: 'approve'
-                }
-            }
-        ],
-        task_004: [
-            {
-                id: 'run_004',
-                taskId: 'task_004',
-                mode: 'single-agent',
-                status: 'planned',
-                startedAt: '2026-04-18T10:22:00Z',
-                currentPhase: 'plan',
-                primaryAgentRole: 'Planner',
-                summary: 'Task has been scoped but execution has not started.',
-                steps: [
-                    { id: 'step_010', phase: 'plan', agentRole: 'Planner', status: 'completed', summary: 'Captured the document set and expected output sections.' }
-                ],
-                artifacts: [],
-                verdict: {
-                    decision: 'queued',
-                    reason: 'Waiting for execution.',
-                    risks: ['Assumptions in the notes may still be outdated'],
-                    recommendedNextAction: 'start_run'
-                }
-            }
-        ]
+    meta: {
+        clineAvailable: false,
+        clinePath: null,
+        timeoutSeconds: null,
     },
-    selectedTaskId: 'task_001',
+    tasks: [],
+    runsByTaskId: {},
+    artifactsByRunId: {},
+    verdictsByRunId: {},
+    selectedTaskId: null,
+    selectedRunIdByTaskId: {},
     filters: {
-        type: 'all',
-        status: 'all'
-    }
+        type: "all",
+        status: "all",
+    },
+    ui: {
+        loadingBoard: true,
+        loadingDetail: false,
+        backgroundRefreshing: false,
+        actionPending: false,
+        error: "",
+    },
 };
 
-const columns = document.querySelectorAll('.column');
-const modal = document.getElementById('taskModal');
-const addTaskBtn = document.getElementById('addTaskBtn');
-const cancelBtn = document.getElementById('cancelBtn');
-const saveBtn = document.getElementById('saveBtn');
-const taskTitleInput = document.getElementById('taskTitleInput');
-const taskTypeInput = document.getElementById('taskTypeInput');
-const taskGoalInput = document.getElementById('taskGoalInput');
-const taskModeInput = document.getElementById('taskModeInput');
-const taskTypeFilter = document.getElementById('taskTypeFilter');
-const statusFilter = document.getElementById('statusFilter');
-const retryBtn = document.getElementById('retryBtn');
-const reopenBtn = document.getElementById('reopenBtn');
-const approveBtn = document.getElementById('approveBtn');
+const columns = document.querySelectorAll(".column");
+const modal = document.getElementById("taskModal");
+const addTaskBtn = document.getElementById("addTaskBtn");
+const cancelBtn = document.getElementById("cancelBtn");
+const saveBtn = document.getElementById("saveBtn");
+const retryBtn = document.getElementById("retryBtn");
+const reopenBtn = document.getElementById("reopenBtn");
+const approveBtn = document.getElementById("approveBtn");
+const cancelRunBtn = document.getElementById("cancelRunBtn");
+const taskTitleInput = document.getElementById("taskTitleInput");
+const taskTypeInput = document.getElementById("taskTypeInput");
+const taskGoalInput = document.getElementById("taskGoalInput");
+const taskConstraintsInput = document.getElementById("taskConstraintsInput");
+const taskModeInput = document.getElementById("taskModeInput");
+const taskPriorityInput = document.getElementById("taskPriorityInput");
+const taskPathsInput = document.getElementById("taskPathsInput");
+const taskTypeFilter = document.getElementById("taskTypeFilter");
+const statusFilter = document.getElementById("statusFilter");
+const globalBanner = document.getElementById("globalBanner");
 
-function initWorkbench() {
+async function api(path, options = {}) {
+    const response = await fetch(path, {
+        headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+        },
+        ...options,
+    });
+
+    if (!response.ok) {
+        let detail = "Request failed";
+        try {
+            const errorBody = await response.json();
+            detail = errorBody.detail || detail;
+        } catch {
+            detail = response.statusText || detail;
+        }
+        throw new Error(detail);
+    }
+
+    if (response.status === 204) {
+        return null;
+    }
+
+    return response.json();
+}
+
+async function initWorkbench() {
     bindEvents();
     renderWorkbench();
+    await loadMeta();
+    await loadBoard();
+    window.setInterval(pollActiveRuns, 5000);
 }
 
 function bindEvents() {
-    addTaskBtn.addEventListener('click', openTaskModal);
-    cancelBtn.addEventListener('click', closeTaskModal);
-    saveBtn.addEventListener('click', createTask);
+    addTaskBtn.addEventListener("click", openTaskModal);
+    cancelBtn.addEventListener("click", closeTaskModal);
+    saveBtn.addEventListener("click", createTask);
 
-    taskTypeFilter.addEventListener('change', (event) => {
+    taskTypeFilter.addEventListener("change", (event) => {
         state.filters.type = event.target.value;
         renderWorkbench();
     });
 
-    statusFilter.addEventListener('change', (event) => {
+    statusFilter.addEventListener("change", (event) => {
         state.filters.status = event.target.value;
         renderWorkbench();
     });
 
-    retryBtn.addEventListener('click', () => triggerRunAction('retry'));
-    reopenBtn.addEventListener('click', () => triggerRunAction('reopen'));
-    approveBtn.addEventListener('click', () => triggerRunAction('approve'));
+    retryBtn.addEventListener("click", () => triggerRunAction("retry"));
+    reopenBtn.addEventListener("click", () => patchRun("reopen"));
+    approveBtn.addEventListener("click", () => patchRun("approve"));
+    cancelRunBtn.addEventListener("click", () => patchRun("cancel"));
+}
+
+async function loadMeta() {
+    try {
+        state.meta = await api("/api/meta");
+    } catch (error) {
+        state.ui.error = `Executor metadata failed to load: ${error.message}`;
+    } finally {
+        renderBanner();
+    }
+}
+
+async function loadBoard(options = {}) {
+    const { background = false } = options;
+
+    if (background) {
+        state.ui.backgroundRefreshing = true;
+    } else {
+        state.ui.loadingBoard = true;
+        state.ui.error = "";
+        renderWorkbench();
+    }
+
+    try {
+        state.tasks = await api("/api/tasks");
+        syncSelectionAfterBoardLoad();
+        if (state.selectedTaskId) {
+            await loadTaskDetail(state.selectedTaskId, null, { background });
+        }
+    } catch (error) {
+        state.ui.error = `Task list failed to load: ${error.message}`;
+    } finally {
+        if (background) {
+            state.ui.backgroundRefreshing = false;
+        } else {
+            state.ui.loadingBoard = false;
+        }
+        renderWorkbench();
+    }
+}
+
+function syncSelectionAfterBoardLoad() {
+    if (!state.tasks.length) {
+        state.selectedTaskId = null;
+        return;
+    }
+
+    const existing = state.tasks.find((task) => task.id === state.selectedTaskId);
+    state.selectedTaskId = existing ? existing.id : state.tasks[0].id;
+}
+
+async function loadTaskDetail(taskId, preferredRunId = null, options = {}) {
+    const { background = false } = options;
+
+    if (!background) {
+        state.ui.loadingDetail = true;
+        renderWorkbench();
+    }
+
+    try {
+        const runs = await api(`/api/tasks/${taskId}/runs`);
+        state.runsByTaskId[taskId] = runs;
+
+        const selectedRunId = preferredRunId
+            || state.selectedRunIdByTaskId[taskId]
+            || runs[0]?.id
+            || null;
+
+        state.selectedRunIdByTaskId[taskId] = selectedRunId;
+        if (!selectedRunId) {
+            return;
+        }
+
+        const [run, artifacts, verdict] = await Promise.all([
+            api(`/api/runs/${selectedRunId}`),
+            api(`/api/runs/${selectedRunId}/artifacts`),
+            api(`/api/runs/${selectedRunId}/verdict`),
+        ]);
+
+        replaceRunInCache(taskId, run);
+        state.artifactsByRunId[selectedRunId] = artifacts;
+        state.verdictsByRunId[selectedRunId] = verdict;
+    } catch (error) {
+        state.ui.error = `Run detail failed to load: ${error.message}`;
+    } finally {
+        if (!background) {
+            state.ui.loadingDetail = false;
+        }
+        renderWorkbench();
+    }
+}
+
+function replaceRunInCache(taskId, run) {
+    const runs = state.runsByTaskId[taskId] || [];
+    const index = runs.findIndex((item) => item.id === run.id);
+    if (index >= 0) {
+        runs[index] = run;
+    } else {
+        runs.unshift(run);
+    }
+}
+
+async function createTask() {
+    const title = taskTitleInput.value.trim();
+    const goal = taskGoalInput.value.trim();
+    const type = taskTypeInput.value;
+    const mode = taskModeInput.value;
+    const priority = taskPriorityInput.value;
+    const constraints = splitMultiline(taskConstraintsInput.value);
+    const relatedPaths = splitMultiline(taskPathsInput.value);
+
+    if (!title || !goal) {
+        window.alert("Title and goal are required.");
+        return;
+    }
+
+    state.ui.actionPending = true;
+    renderWorkbench();
+
+    try {
+        const task = await api("/api/tasks", {
+            method: "POST",
+            body: JSON.stringify({ title, type, goal, mode, priority, constraints, relatedPaths }),
+        });
+        closeTaskModal();
+        await loadBoard();
+        state.selectedTaskId = task.id;
+        await loadTaskDetail(task.id);
+    } catch (error) {
+        state.ui.error = `Task creation failed: ${error.message}`;
+        renderBanner();
+    } finally {
+        state.ui.actionPending = false;
+        renderWorkbench();
+    }
+}
+
+async function triggerRunAction(action) {
+    const task = getSelectedTask();
+    if (!task) {
+        return;
+    }
+
+    state.ui.actionPending = true;
+    renderWorkbench();
+
+    try {
+        const run = await api(`/api/tasks/${task.id}/runs`, {
+            method: "POST",
+            body: JSON.stringify({ action, useCline: true }),
+        });
+        await loadBoard();
+        state.selectedTaskId = task.id;
+        await loadTaskDetail(task.id, run.id);
+        state.ui.error = "";
+    } catch (error) {
+        state.ui.error = `Run action failed: ${error.message}`;
+        renderBanner();
+    } finally {
+        state.ui.actionPending = false;
+        renderWorkbench();
+    }
+}
+
+async function patchRun(action) {
+    const run = getSelectedRun();
+    if (!run) {
+        return;
+    }
+
+    state.ui.actionPending = true;
+    renderWorkbench();
+
+    try {
+        await api(`/api/runs/${run.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ action }),
+        });
+        await loadBoard();
+        await loadTaskDetail(run.taskId, run.id);
+        state.ui.error = "";
+    } catch (error) {
+        state.ui.error = `State transition failed: ${error.message}`;
+        renderBanner();
+    } finally {
+        state.ui.actionPending = false;
+        renderWorkbench();
+    }
+}
+
+async function pollActiveRuns() {
+    if (state.ui.loadingBoard || state.ui.loadingDetail || state.ui.actionPending || state.ui.backgroundRefreshing) {
+        return;
+    }
+
+    const activeTask = state.tasks.find((task) =>
+        ["running", "revising", "awaiting_review"].includes(task.latestRunStatus)
+    );
+
+    if (!activeTask) {
+        return;
+    }
+
+    await loadBoard({ background: true });
 }
 
 function renderWorkbench() {
+    renderBanner();
     renderBoard();
     renderSidebarSummary();
     renderDetailPanel();
 }
 
-function getLatestRun(task) {
-    return (state.runsByTaskId[task.id] || []).find((run) => run.id === task.latestRunId) || null;
-}
+function renderBanner() {
+    const notices = [];
+    if (state.meta.clineAvailable) {
+        notices.push(`Cline connected via ${state.meta.clinePath}`);
+    } else {
+        notices.push("Cline not detected. Run actions use the mock executor path.");
+    }
 
-function getStatusGroup(status) {
-    return Object.entries(BOARD_GROUPS).find(([, statuses]) => statuses.includes(status))?.[0] || 'queue';
-}
+    if (state.ui.error) {
+        globalBanner.textContent = state.ui.error;
+        globalBanner.classList.remove("hidden");
+        globalBanner.classList.add("error");
+        return;
+    }
 
-function getVisibleTasks() {
-    return state.tasks.filter((task) => {
-        const latestRun = getLatestRun(task);
-        const matchesType = state.filters.type === 'all' || task.type === state.filters.type;
-        const matchesStatus = state.filters.status === 'all' || task.latestRunStatus === state.filters.status;
-        return matchesType && matchesStatus && latestRun;
-    });
+    if (state.ui.loadingBoard || state.ui.loadingDetail || state.ui.actionPending) {
+        notices.push("Workbench is syncing state.");
+    }
+
+    globalBanner.textContent = notices.join(" ");
+    globalBanner.classList.remove("hidden");
+    globalBanner.classList.remove("error");
 }
 
 function renderBoard() {
-    document.querySelectorAll('.task-list').forEach((list) => {
-        list.innerHTML = '';
+    document.querySelectorAll(".task-list").forEach((list) => {
+        list.innerHTML = "";
     });
 
+    if (state.ui.loadingBoard) {
+        document.querySelectorAll(".task-list").forEach((list) => {
+            list.innerHTML = '<div class="task-list-empty">Loading tasks...</div>';
+        });
+        updateColumnCounts([]);
+        return;
+    }
+
     const visibleTasks = getVisibleTasks();
+    if (!visibleTasks.length) {
+        document.querySelectorAll(".task-list").forEach((list) => {
+            list.innerHTML = '<div class="task-list-empty">No tasks match the current filters. Create a task or loosen the filters.</div>';
+        });
+        updateColumnCounts([]);
+        return;
+    }
 
     visibleTasks.forEach((task) => {
+        const latestRun = getLatestRun(task);
         const list = document.querySelector(`#col-${getStatusGroup(task.latestRunStatus)} .task-list`);
-        if (list) {
-            list.appendChild(createTaskCard(task, getLatestRun(task)));
+        if (list && latestRun) {
+            list.appendChild(createTaskCard(task, latestRun));
         }
     });
 
+    updateColumnCounts(visibleTasks);
+}
+
+function updateColumnCounts(visibleTasks) {
     columns.forEach((column) => {
         const group = column.dataset.statusGroup;
         const count = visibleTasks.filter((task) => getStatusGroup(task.latestRunStatus) === group).length;
-        column.querySelector('.count').innerText = count.toString().padStart(2, '0');
+        column.querySelector(".count").textContent = count.toString().padStart(2, "0");
     });
 }
 
 function createTaskCard(task, run) {
-    const card = document.createElement('article');
-    card.className = `task-card ${getRoleClass(run.primaryAgentRole)}`;
+    const card = document.createElement("article");
+    card.className = `task-card ${getRoleClass(run.primaryAgentRole || "")}`;
     if (task.id === state.selectedTaskId) {
-        card.classList.add('selected');
+        card.classList.add("selected");
     }
 
     card.innerHTML = `
@@ -274,98 +408,180 @@ function createTaskCard(task, run) {
             <span class="meta-pill">${TYPE_LABELS[task.type] || task.type}</span>
             <span class="status-badge">${formatStatus(run.status)}</span>
         </div>
-        <h4>${task.title}</h4>
-        <p class="card-goal">${task.goal}</p>
+        <h4>${escapeHtml(task.title)}</h4>
+        <p class="card-goal">${escapeHtml(task.goal)}</p>
         <div class="monologue-recessed">
-            <span class="fact-label">${run.primaryAgentRole}</span>
-            <p>${run.summary}</p>
+            <span class="fact-label">${escapeHtml(run.primaryAgentRole || "Agent")}</span>
+            <p>${escapeHtml(run.summary || "No summary yet.")}</p>
         </div>
         <div class="task-meta">
-            <span class="role-chip">${run.currentPhase}</span>
+            <span class="role-chip">${escapeHtml(run.currentPhase || "plan")}</span>
             <span class="task-id">${task.id}</span>
         </div>
     `;
 
-    card.addEventListener('click', () => {
+    card.addEventListener("click", async () => {
         state.selectedTaskId = task.id;
-        renderWorkbench();
+        await loadTaskDetail(task.id);
     });
 
     return card;
 }
 
 function renderSidebarSummary() {
-    const allRuns = state.tasks.map((task) => getLatestRun(task)).filter(Boolean);
-    document.getElementById('recentRunsCount').textContent = allRuns.length.toString().padStart(2, '0');
-    document.getElementById('failedRunsCount').textContent = allRuns.filter((run) => run.status === 'failed').length.toString().padStart(2, '0');
-    document.getElementById('openTasksCount').textContent = allRuns.filter((run) => !['completed', 'failed', 'cancelled'].includes(run.status)).length.toString().padStart(2, '0');
+    const runs = state.tasks.map((task) => getLatestRun(task)).filter(Boolean);
+    document.getElementById("recentRunsCount").textContent = runs.length.toString().padStart(2, "0");
+    document.getElementById("failedRunsCount").textContent = runs.filter((run) => run.status === "failed").length.toString().padStart(2, "0");
+    document.getElementById("openTasksCount").textContent = runs.filter((run) => !["completed", "failed", "cancelled"].includes(run.status)).length.toString().padStart(2, "0");
 }
 
 function renderDetailPanel() {
-    const task = state.tasks.find((item) => item.id === state.selectedTaskId);
-    const run = task ? getLatestRun(task) : null;
-    const detailEmptyState = document.getElementById('detailEmptyState');
-    const detailContent = document.getElementById('detailContent');
+    const task = getSelectedTask();
+    const run = getSelectedRun();
+    const detailEmptyState = document.getElementById("detailEmptyState");
+    const detailContent = document.getElementById("detailContent");
 
-    if (!task || !run) {
-        detailEmptyState.classList.remove('hidden');
-        detailContent.classList.add('hidden');
+    if (!task) {
+        detailEmptyState.classList.remove("hidden");
+        detailContent.classList.add("hidden");
+        detailEmptyState.querySelector("h3").textContent = "No task selected";
+        detailEmptyState.querySelector("p").textContent = "Select a card to inspect the latest run, artifacts, verdict, and follow-up actions.";
         return;
     }
 
-    detailEmptyState.classList.add('hidden');
-    detailContent.classList.remove('hidden');
+    if (state.ui.loadingDetail) {
+        detailEmptyState.classList.remove("hidden");
+        detailContent.classList.add("hidden");
+        detailEmptyState.querySelector("h3").textContent = "Loading task detail";
+        detailEmptyState.querySelector("p").textContent = "Runs, artifacts, and verdict data are being loaded.";
+        return;
+    }
 
-    document.getElementById('detailTaskTitle').textContent = task.title;
-    document.getElementById('detailTaskType').textContent = TYPE_LABELS[task.type] || task.type;
-    document.getElementById('detailTaskPriority').textContent = task.priority;
-    document.getElementById('detailTaskGoal').textContent = task.goal;
-    document.getElementById('detailRunStatus').textContent = formatStatus(run.status);
-    document.getElementById('detailRunMode').textContent = MODE_LABELS[run.mode] || run.mode;
-    document.getElementById('detailRunStartedAt').textContent = formatDate(run.startedAt);
-    document.getElementById('detailVerdictDecision').textContent = run.verdict.decision;
-    document.getElementById('detailVerdictAction').textContent = run.verdict.recommendedNextAction.replaceAll('_', ' ');
-    document.getElementById('detailVerdictReason').textContent = run.verdict.reason;
+    detailEmptyState.classList.add("hidden");
+    detailContent.classList.remove("hidden");
 
-    renderConstraints(task.constraints);
-    renderTimeline(run.steps);
-    renderArtifacts(run.artifacts);
-    renderRisks(run.verdict.risks);
+    document.getElementById("detailTaskTitle").textContent = task.title;
+    document.getElementById("detailTaskType").textContent = TYPE_LABELS[task.type] || task.type;
+    document.getElementById("detailTaskPriority").textContent = task.priority;
+    document.getElementById("detailTaskGoal").textContent = task.goal;
+
+    renderConstraints(task.constraints, task.relatedPaths);
+    renderRunHistory(state.runsByTaskId[task.id] || []);
+
+    if (!run) {
+        document.getElementById("detailRunStatus").textContent = "draft";
+        document.getElementById("detailRunMode").textContent = "No runs";
+        document.getElementById("detailRunStartedAt").textContent = "-";
+        document.getElementById("detailRunProvider").textContent = "-";
+        document.getElementById("detailRunSummary").textContent = "Create or start a run to inspect execution detail.";
+        document.getElementById("detailRunCommand").textContent = "No command preview available.";
+        document.getElementById("clineAvailability").textContent = state.meta.clineAvailable ? "available" : "unavailable";
+        renderTimeline([]);
+        renderArtifacts([]);
+        renderVerdict(null);
+        syncActionState(null);
+        return;
+    }
+
+    const verdict = state.verdictsByRunId[run.id] || run.verdict;
+    const artifacts = state.artifactsByRunId[run.id] || run.artifacts || [];
+
+    document.getElementById("detailRunStatus").textContent = formatStatus(run.status);
+    document.getElementById("detailRunMode").textContent = MODE_LABELS[run.mode] || run.mode;
+    document.getElementById("detailRunStartedAt").textContent = formatDate(run.startedAt);
+    document.getElementById("detailRunProvider").textContent = `${run.runner?.provider || "mock"}${run.runner?.available ? "" : " unavailable"}`;
+    document.getElementById("detailRunSummary").textContent = run.summary || "No run summary available.";
+    document.getElementById("detailRunCommand").textContent = run.runner?.commandPreview || "No command preview available yet.";
+    document.getElementById("clineAvailability").textContent = state.meta.clineAvailable ? "available" : "unavailable";
+
+    renderTimeline(run.steps || []);
+    renderArtifacts(artifacts);
+    renderVerdict(verdict);
     syncActionState(run.status);
 }
 
-function renderConstraints(constraints) {
-    const container = document.getElementById('detailTaskConstraints');
-    container.innerHTML = '';
+function renderConstraints(constraints = [], relatedPaths = []) {
+    const container = document.getElementById("detailTaskConstraints");
+    container.innerHTML = "";
+
+    if (!constraints.length && !relatedPaths.length) {
+        container.innerHTML = '<span class="constraint-pill">No explicit constraints</span>';
+        return;
+    }
+
     constraints.forEach((constraint) => {
-        const pill = document.createElement('span');
-        pill.className = 'constraint-pill';
+        const pill = document.createElement("span");
+        pill.className = "constraint-pill";
         pill.textContent = constraint;
+        container.appendChild(pill);
+    });
+
+    relatedPaths.forEach((path) => {
+        const pill = document.createElement("span");
+        pill.className = "meta-pill";
+        pill.textContent = path;
         container.appendChild(pill);
     });
 }
 
-function renderTimeline(steps) {
-    const list = document.getElementById('timelineList');
-    list.innerHTML = '';
-    steps.forEach((step) => {
-        const item = document.createElement('article');
-        item.className = `timeline-item ${step.status}`;
+function renderRunHistory(runs) {
+    const list = document.getElementById("runHistoryList");
+    list.innerHTML = "";
+
+    if (!runs.length) {
+        list.innerHTML = '<p class="empty-copy">No runs have been created for this task yet.</p>';
+        return;
+    }
+
+    runs.forEach((run) => {
+        const item = document.createElement("article");
+        item.className = "run-history-item";
+        if (run.id === state.selectedRunIdByTaskId[run.taskId]) {
+            item.classList.add("selected");
+        }
         item.innerHTML = `
             <div class="timeline-meta">
-                <span class="meta-pill">${step.phase}</span>
-                <span class="status-badge subtle">${formatStatus(step.status)}</span>
+                <span class="meta-pill">${run.id}</span>
+                <span class="status-badge subtle">${formatStatus(run.status)}</span>
             </div>
-            <strong>${step.agentRole}</strong>
-            <p>${step.summary}</p>
+            <strong>${escapeHtml(MODE_LABELS[run.mode] || run.mode)}</strong>
+            <p>${escapeHtml(run.summary || "No summary available.")}</p>
+        `;
+        item.addEventListener("click", async () => {
+            state.selectedRunIdByTaskId[run.taskId] = run.id;
+            await loadTaskDetail(run.taskId, run.id);
+        });
+        list.appendChild(item);
+    });
+}
+
+function renderTimeline(steps) {
+    const list = document.getElementById("timelineList");
+    list.innerHTML = "";
+
+    if (!steps.length) {
+        list.innerHTML = '<p class="empty-copy">No timeline steps are available.</p>';
+        return;
+    }
+
+    steps.forEach((step) => {
+        const item = document.createElement("article");
+        item.className = `timeline-item ${step.status || ""}`;
+        item.innerHTML = `
+            <div class="timeline-meta">
+                <span class="meta-pill">${escapeHtml(step.phase)}</span>
+                <span class="status-badge subtle">${formatStatus(step.status || "pending")}</span>
+            </div>
+            <strong>${escapeHtml(step.agentRole)}</strong>
+            <p>${escapeHtml(step.summary)}</p>
         `;
         list.appendChild(item);
     });
 }
 
 function renderArtifacts(artifacts) {
-    const list = document.getElementById('artifactList');
-    list.innerHTML = '';
+    const list = document.getElementById("artifactList");
+    list.innerHTML = "";
 
     if (!artifacts.length) {
         list.innerHTML = '<p class="empty-copy">No artifacts yet for this run.</p>';
@@ -373,201 +589,174 @@ function renderArtifacts(artifacts) {
     }
 
     artifacts.forEach((artifact) => {
-        const item = document.createElement('article');
-        item.className = `artifact-item${artifact.selected ? ' selected' : ''}`;
+        const item = document.createElement("article");
+        item.className = `artifact-item${artifact.selected ? " selected" : ""}`;
         item.innerHTML = `
             <div class="timeline-meta">
-                <span class="meta-pill">${artifact.type}</span>
-                ${artifact.selected ? '<span class="status-badge subtle">selected</span>' : ''}
+                <span class="meta-pill">${escapeHtml(artifact.type)}</span>
+                ${artifact.selected ? '<span class="status-badge subtle">selected</span>' : ""}
             </div>
-            <strong>${artifact.title}</strong>
-            <p>${artifact.path}</p>
+            <strong>${escapeHtml(artifact.title)}</strong>
+            <p>${escapeHtml(artifact.path || "inline artifact")}</p>
+            ${artifact.content ? `<pre class="artifact-content">${escapeHtml(artifact.content)}</pre>` : ""}
         `;
         list.appendChild(item);
     });
 }
 
+function renderVerdict(verdict) {
+    document.getElementById("detailVerdictDecision").textContent = verdict?.decision || "pending";
+    document.getElementById("detailVerdictAction").textContent = (verdict?.recommendedNextAction || "waiting").replaceAll("_", " ");
+    document.getElementById("detailVerdictReason").textContent = verdict?.reason || "No verdict available yet.";
+    renderRisks(verdict?.risks || []);
+}
+
 function renderRisks(risks) {
-    const container = document.getElementById('detailVerdictRisks');
-    container.innerHTML = '';
+    const container = document.getElementById("detailVerdictRisks");
+    container.innerHTML = "";
+
+    if (!risks.length) {
+        container.innerHTML = '<span class="risk-pill">No explicit risks</span>';
+        return;
+    }
+
     risks.forEach((risk) => {
-        const pill = document.createElement('span');
-        pill.className = 'risk-pill';
+        const pill = document.createElement("span");
+        pill.className = "risk-pill";
         pill.textContent = risk;
         container.appendChild(pill);
     });
 }
 
 function syncActionState(status) {
-    retryBtn.disabled = false;
-    reopenBtn.disabled = false;
-    approveBtn.disabled = false;
+    const disabled = state.ui.actionPending || state.ui.loadingDetail;
+    retryBtn.disabled = disabled;
+    reopenBtn.disabled = disabled;
+    approveBtn.disabled = disabled;
+    cancelRunBtn.disabled = disabled;
 
-    if (status === 'running') {
-        approveBtn.disabled = true;
-    }
-
-    if (status === 'completed') {
-        approveBtn.disabled = true;
-    }
-
-    if (status === 'planned') {
+    if (!status) {
+        retryBtn.disabled = false;
         reopenBtn.disabled = true;
+        approveBtn.disabled = true;
+        cancelRunBtn.disabled = true;
+        return;
+    }
+
+    if (["draft", "planned"].includes(status)) {
+        approveBtn.disabled = true;
+        cancelRunBtn.disabled = true;
+    }
+
+    if (status === "running" || status === "revising") {
+        approveBtn.disabled = true;
+        reopenBtn.disabled = true;
+    }
+
+    if (status === "completed") {
+        approveBtn.disabled = true;
+        cancelRunBtn.disabled = true;
+    }
+
+    if (status === "cancelled" || status === "failed") {
+        reopenBtn.disabled = false;
+        cancelRunBtn.disabled = true;
+        approveBtn.disabled = true;
     }
 }
 
 function openTaskModal() {
-    modal.classList.remove('hidden');
+    modal.classList.remove("hidden");
     taskTitleInput.focus();
 }
 
 function closeTaskModal() {
-    modal.classList.add('hidden');
-    taskTitleInput.value = '';
-    taskGoalInput.value = '';
-    taskTypeInput.value = 'document_analysis';
-    taskModeInput.value = 'plan-execute-eval';
+    modal.classList.add("hidden");
+    taskTitleInput.value = "";
+    taskGoalInput.value = "";
+    taskConstraintsInput.value = "";
+    taskPathsInput.value = "";
+    taskTypeInput.value = "document_analysis";
+    taskModeInput.value = "plan-execute-eval";
+    taskPriorityInput.value = "medium";
 }
 
-function createTask() {
-    const title = taskTitleInput.value.trim();
-    const goal = taskGoalInput.value.trim();
-    const type = taskTypeInput.value;
-    const mode = taskModeInput.value;
-
-    if (!title || !goal) {
-        window.alert('Title and goal are required.');
-        return;
-    }
-
-    const taskId = `task_${Math.random().toString(36).slice(2, 8)}`;
-    const runId = `run_${Math.random().toString(36).slice(2, 8)}`;
-
-    const newTask = {
-        id: taskId,
-        title,
-        type,
-        goal,
-        constraints: ['New task created from workbench UI'],
-        priority: 'medium',
-        createdAt: new Date().toISOString(),
-        latestRunId: runId,
-        latestRunStatus: 'draft'
-    };
-
-    const newRun = {
-        id: runId,
-        taskId,
-        mode,
-        status: 'draft',
-        startedAt: new Date().toISOString(),
-        currentPhase: 'plan',
-        primaryAgentRole: 'Planner',
-        summary: 'Task is queued for orchestration and waiting for execution.',
-        steps: [
-            { id: `step_${Math.random().toString(36).slice(2, 8)}`, phase: 'plan', agentRole: 'Planner', status: 'pending', summary: 'Planning has not started yet.' }
-        ],
-        artifacts: [],
-        verdict: {
-            decision: 'queued',
-            reason: 'No execution has started yet.',
-            risks: ['Context may still be incomplete'],
-            recommendedNextAction: 'start_run'
-        }
-    };
-
-    state.tasks.unshift(newTask);
-    state.runsByTaskId[taskId] = [newRun];
-    state.selectedTaskId = taskId;
-    closeTaskModal();
-    renderWorkbench();
+function getVisibleTasks() {
+    return state.tasks.filter((task) => {
+        const latestRun = getLatestRun(task);
+        const matchesType = state.filters.type === "all" || task.type === state.filters.type;
+        const matchesStatus = state.filters.status === "all" || task.latestRunStatus === state.filters.status;
+        return matchesType && matchesStatus && latestRun;
+    });
 }
 
-function triggerRunAction(action) {
-    const task = state.tasks.find((item) => item.id === state.selectedTaskId);
-    if (!task) {
-        return;
-    }
-
+function getLatestRun(task) {
     const runs = state.runsByTaskId[task.id];
-    const latestRun = getLatestRun(task);
-    if (!latestRun) {
-        return;
+    if (runs?.length) {
+        return runs.find((run) => run.id === task.latestRunId) || runs[0];
     }
+    return task.latestRun || null;
+}
 
-    if (action === 'retry') {
-        const runId = `run_${Math.random().toString(36).slice(2, 8)}`;
-        const newRun = {
-            id: runId,
-            taskId: task.id,
-            mode: latestRun.mode,
-            status: 'revising',
-            startedAt: new Date().toISOString(),
-            currentPhase: 'execute',
-            primaryAgentRole: 'Cline Executor',
-            summary: 'Retry started with critique from the previous verdict.',
-            steps: [
-                { id: `step_${Math.random().toString(36).slice(2, 8)}`, phase: 'plan', agentRole: 'Planner', status: 'completed', summary: 'Critique was transformed into a revised execution plan.' },
-                { id: `step_${Math.random().toString(36).slice(2, 8)}`, phase: 'execute', agentRole: 'Cline Executor', status: 'running', summary: 'A new attempt is underway with tighter acceptance criteria.' }
-            ],
-            artifacts: [],
-            verdict: {
-                decision: 'pending',
-                reason: 'Retry execution has just started.',
-                risks: ['Result is still unverified'],
-                recommendedNextAction: 'continue_run'
-            }
-        };
+function getSelectedTask() {
+    return state.tasks.find((task) => task.id === state.selectedTaskId) || null;
+}
 
-        runs.unshift(newRun);
-        task.latestRunId = runId;
-        task.latestRunStatus = 'revising';
+function getSelectedRun() {
+    const task = getSelectedTask();
+    if (!task) {
+        return null;
     }
+    const selectedRunId = state.selectedRunIdByTaskId[task.id] || task.latestRunId;
+    const runs = state.runsByTaskId[task.id] || [];
+    return runs.find((run) => run.id === selectedRunId) || getLatestRun(task);
+}
 
-    if (action === 'approve') {
-        latestRun.status = 'completed';
-        latestRun.currentPhase = 'eval';
-        latestRun.summary = 'Run approved by the user from the workbench.';
-        latestRun.verdict.decision = 'approved';
-        latestRun.verdict.reason = 'The user accepted the current result.';
-        latestRun.verdict.recommendedNextAction = 'approved';
-        task.latestRunStatus = 'completed';
-    }
-
-    if (action === 'reopen') {
-        latestRun.status = 'planned';
-        latestRun.currentPhase = 'plan';
-        latestRun.summary = 'Run reopened and moved back to planning.';
-        latestRun.verdict.decision = 'queued';
-        latestRun.verdict.reason = 'The user requested a reopened planning cycle.';
-        latestRun.verdict.recommendedNextAction = 'start_run';
-        task.latestRunStatus = 'planned';
-    }
-
-    renderWorkbench();
+function getStatusGroup(status) {
+    return Object.entries(BOARD_GROUPS).find(([, statuses]) => statuses.includes(status))?.[0] || "queue";
 }
 
 function getRoleClass(role) {
-    if (role.toLowerCase().includes('executor')) {
-        return 'role-executor';
+    const value = role.toLowerCase();
+    if (value.includes("executor")) {
+        return "role-executor";
     }
-    if (role.toLowerCase().includes('evaluator')) {
-        return 'role-evaluator';
+    if (value.includes("evaluator")) {
+        return "role-evaluator";
     }
-    return '';
+    return "";
 }
 
 function formatStatus(status) {
-    return status.replaceAll('_', ' ');
+    return status.replaceAll("_", " ");
 }
 
 function formatDate(value) {
-    return new Intl.DateTimeFormat('ko-KR', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+    if (!value) {
+        return "-";
+    }
+    return new Intl.DateTimeFormat("ko-KR", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
     }).format(new Date(value));
+}
+
+function splitMultiline(value) {
+    return value
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
 }
 
 initWorkbench();

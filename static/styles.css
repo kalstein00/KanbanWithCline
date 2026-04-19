@@ -212,6 +212,19 @@ select {
     min-height: calc(100vh - 5rem);
 }
 
+.banner {
+    padding: 1rem 1.2rem;
+    border-radius: 18px;
+    background: rgba(0, 90, 194, 0.09);
+    color: var(--primary);
+    box-shadow: var(--ambient-shadow);
+}
+
+.banner.error {
+    background: rgba(107, 61, 145, 0.1);
+    color: var(--secondary);
+}
+
 .board-header {
     display: flex;
     justify-content: space-between;
@@ -296,6 +309,14 @@ select {
     flex-direction: column;
     gap: 1rem;
     min-height: 0;
+}
+
+.task-list-empty {
+    padding: 1rem;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.65);
+    color: var(--on-surface-variant);
+    line-height: 1.55;
 }
 
 .task-card {
@@ -472,7 +493,8 @@ select {
 .constraint-list,
 .risk-list,
 .artifact-list,
-.timeline-list {
+.timeline-list,
+.run-history-list {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
@@ -484,16 +506,36 @@ select {
 }
 
 .timeline-list,
-.artifact-list {
+.artifact-list,
+.run-history-list {
     flex-direction: column;
 }
 
 .timeline-item,
 .artifact-item,
+.run-history-item,
+.runner-card,
 .verdict-card {
     padding: 1rem;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.72);
+}
+
+.run-history-item {
+    cursor: pointer;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.run-history-item:hover,
+.run-history-item.selected {
+    transform: translateY(-1px);
+    box-shadow: var(--ambient-shadow);
+}
+
+.runner-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
 }
 
 .timeline-item.running {
@@ -520,6 +562,17 @@ select {
 
 .empty-copy {
     color: var(--on-surface-variant);
+}
+
+.artifact-content {
+    margin-top: 0.75rem;
+    padding: 0.85rem;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.03);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .btn {
@@ -554,6 +607,11 @@ select {
 .btn.secondary {
     background: rgba(107, 61, 145, 0.12);
     color: var(--secondary);
+}
+
+.btn.subtle {
+    background: rgba(26, 28, 30, 0.08);
+    color: var(--on-surface);
 }
 
 .modal-overlay {
@@ -599,7 +657,9 @@ select {
 }
 
 .input-group:first-child,
-.input-group:nth-child(3) {
+.input-group:nth-child(3),
+.input-group:nth-child(5),
+.input-group:nth-child(8) {
     grid-column: 1 / -1;
 }
 
@@ -672,6 +732,12 @@ select {
     .action-row,
     .modal-actions {
         flex-direction: column;
+    }
+
+    .run-facts {
+        flex-direction: column;
+        align-items: start;
+        gap: 0.85rem;
     }
 
     .btn {
