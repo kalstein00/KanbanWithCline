@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import atexit
 import socket
 import json
+import os
 import queue
 import subprocess
+import signal
+import sys
 import threading
 from copy import deepcopy
 from datetime import datetime
@@ -34,6 +38,36 @@ RUN_STATUS_GROUPS = {
     "stream": {"running", "awaiting_review", "revising"},
     "synthesis": {"completed", "failed", "cancelled", "orphaned"},
 }
+
+
+class LifecycleTracker:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.shutdown_reason = "unknown"
+        self.shutdown_signal: str | None = None
+        self.exit_code: int | None = None
+        self.signal_handlers_installed = False
+
+    def mark_shutdown(self, reason: str, *, signame: str | None = None, exit_code: int | None = None) -> None:
+        with self.lock:
+            self.shutdown_reason = reason
+            if signame:
+                self.shutdown_signal = signame
+            if exit_code is not None:
+                self.exit_code = exit_code
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "reason": self.shutdown_reason,
+                "signal": self.shutdown_signal,
+                "exitCode": self.exit_code,
+                "pid": os.getpid(),
+                "ppid": os.getppid(),
+            }
+
+
+lifecycle = LifecycleTracker()
 
 
 def local_now() -> datetime:
@@ -184,6 +218,66 @@ def infer_failure_analysis(run: dict[str, Any], *, code: str | None = None, reas
         "skillSeed": skill_seed,
         "updatedAt": local_now_iso(),
     }
+
+
+def parse_markdown_checklist(text: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("- [") or len(line) < 6:
+            continue
+        marker = line[3:4].lower()
+        if marker not in {" ", "x"}:
+            continue
+        label = line[6:].strip()
+        if not label:
+            continue
+        items.append(
+            {
+                "id": new_id("check"),
+                "label": label,
+                "done": marker == "x",
+                "updatedAt": local_now_iso(),
+            }
+        )
+    return items
+
+
+def install_lifecycle_signal_handlers() -> None:
+    if lifecycle.signal_handlers_installed:
+        return
+
+    def make_handler(signum: int, previous_handler: Any):
+        signame = signal.Signals(signum).name
+
+        def _handler(*args: Any) -> None:
+            lifecycle.mark_shutdown("signal", signame=signame, exit_code=128 + signum)
+            if callable(previous_handler):
+                previous_handler(*args)
+            elif previous_handler == signal.SIG_DFL:
+                raise SystemExit(128 + signum)
+
+        return _handler
+
+    for signame in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"):
+        if not hasattr(signal, signame):
+            continue
+        signum = getattr(signal, signame)
+        previous_handler = signal.getsignal(signum)
+        signal.signal(signum, make_handler(signum, previous_handler))
+
+    def _excepthook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+        lifecycle.mark_shutdown("uncaught_exception")
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _excepthook
+
+    def _atexit() -> None:
+        if lifecycle.snapshot()["reason"] == "unknown":
+            lifecycle.mark_shutdown("process_exit", exit_code=0)
+
+    atexit.register(_atexit)
+    lifecycle.signal_handlers_installed = True
 
 
 class RunEventBroadcaster:
@@ -413,13 +507,25 @@ class InMemoryStore:
                         "risks": ["Execution stopped mid-stream and may have partial artifacts only"],
                         "recommendedNextAction": "retry_or_reopen",
                     }
+                    run.setdefault("runner", {})["recoveryReason"] = lifecycle.snapshot()["reason"]
                     run["failureAnalysis"] = infer_failure_analysis(run, reason=run["verdict"]["reason"])
                     if len(run.get("steps", [])) > 1:
                         run["steps"][1]["status"] = "failed"
                     if len(run.get("steps", [])) > 2:
                         run["steps"][2]["status"] = "completed"
                         run["steps"][2]["summary"] = "Run marked orphaned during server recovery."
-                    self.append_event(run, "orphaned_run", "Run was interrupted while the server restarted or the worker exited.")
+                    self.append_event(
+                        run,
+                        "orphaned_run",
+                        "Run was interrupted while the server restarted or the worker exited.",
+                        raw={"recoveryReason": lifecycle.snapshot()["reason"], "shutdownSignal": lifecycle.snapshot()["signal"]},
+                    )
+                    self.log_executor_lifecycle(
+                        run,
+                        "run_recovered_orphaned",
+                        message="Recovered run as orphaned during startup.",
+                        payload={"recoveryReason": lifecycle.snapshot()["reason"], "shutdownSignal": lifecycle.snapshot()["signal"]},
+                    )
                     task["latestRunStatus"] = run["status"]
                     reconciled.append(run["id"])
             if reconciled:
@@ -498,6 +604,7 @@ class InMemoryStore:
                 "events": [self._event("created", "Task and initial draft run were created.")],
                 "steps": [self._step("plan", "Planner", "pending", "Planning has not started yet.")],
                 "artifacts": [self._artifact("log", "Run JSONL log", log_path or "", selected=False)] if log_path else [],
+                "planChecklist": [],
                 "verdict": {
                     "decision": "queued",
                     "reason": "No execution has started yet.",
@@ -632,11 +739,33 @@ class InMemoryStore:
         }
         self.logger.append(log_path, record)
 
+    def log_executor_lifecycle(
+        self,
+        run: dict[str, Any],
+        kind: str,
+        *,
+        message: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.log_run_record(run["taskId"], run["id"], kind, message=message, payload=payload)
+        system_logger.append(
+            kind,
+            message,
+            payload={
+                "taskId": run["taskId"],
+                "runId": run["id"],
+                "runStatus": run.get("status"),
+                "runner": run.get("runner"),
+                **(payload or {}),
+            },
+        )
+
     def build_run_payload(self, task: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
         return {
             "task": {**deepcopy(task), "latestRun": self.run_snapshot(run)},
             "run": deepcopy(run),
             "artifacts": deepcopy(run["artifacts"]),
+            "planChecklist": deepcopy(run.get("planChecklist", [])),
             "verdict": deepcopy(run["verdict"]),
             "failureAnalysis": deepcopy(run.get("failureAnalysis")),
         }
@@ -693,6 +822,7 @@ class InMemoryStore:
                     self._step("eval", "Evaluator", "pending", "Waiting for artifacts from the new run."),
                 ],
                 "artifacts": [self._artifact("log", "Run JSONL log", log_path or "", selected=False)] if log_path else [],
+                "planChecklist": [],
                 "verdict": {
                     "decision": "pending",
                     "reason": "The run is still in progress.",
@@ -827,6 +957,9 @@ class InMemoryStore:
             return
 
         if event_type == "say" and say_type == "task_progress":
+            checklist = parse_markdown_checklist(text)
+            if checklist:
+                run["planChecklist"] = checklist
             self.append_event(run, "task_progress", trim_text(text or "Task progress updated."), raw=event)
             self.upsert_artifact(run, "task_progress", "Cline task progress", content=text)
             return
@@ -904,6 +1037,18 @@ class InMemoryStore:
                     self._mark_run_failed(run_id, f"Cline failed to start: {exc}", "spawn")
                 self.publish_run_update(task_id, run_id)
                 return
+            with self.lock:
+                current_run = self.get_run_or_404(run_id)
+                current_run["runner"]["processId"] = process.pid
+                current_run["runner"]["spawnedAt"] = local_now_iso()
+                current_run["runner"]["lastKnownState"] = "running"
+                self.save_state()
+                self.log_executor_lifecycle(
+                    current_run,
+                    "executor_spawned",
+                    message="Started Cline subprocess for run execution.",
+                    payload={"processId": process.pid, "command": command},
+                )
             stdout_lines: list[str] = []
             try:
                 assert process.stdout is not None
@@ -930,12 +1075,31 @@ class InMemoryStore:
             except subprocess.TimeoutExpired:
                 process.kill()
                 with self.lock:
+                    current_run = self.get_run_or_404(run_id)
+                    current_run["runner"]["lastKnownState"] = "killed"
+                    current_run["runner"]["terminatedAt"] = local_now_iso()
+                    current_run["runner"]["terminationReason"] = "timeout"
+                    self.log_executor_lifecycle(
+                        current_run,
+                        "executor_killed",
+                        message="Killed Cline subprocess after timeout.",
+                        payload={"processId": current_run["runner"].get("processId"), "reason": "timeout"},
+                    )
                     self._mark_run_failed(run_id, "Cline timed out before producing a reviewable result.", "timeout")
                 self.publish_run_update(task_id, run_id)
                 return
 
             with self.lock:
                 current_run = self.get_run_or_404(run_id)
+                current_run["runner"]["lastKnownState"] = "exited"
+                current_run["runner"]["terminatedAt"] = local_now_iso()
+                current_run["runner"]["exitCode"] = return_code
+                self.log_executor_lifecycle(
+                    current_run,
+                    "executor_exited",
+                    message="Cline subprocess exited.",
+                    payload={"processId": current_run["runner"].get("processId"), "exitCode": return_code},
+                )
                 self.upsert_artifact(current_run, "event_stream", "Cline JSON event stream", content="\n".join(stdout_lines))
                 if return_code != 0:
                     self._mark_run_failed(run_id, "Cline returned a non-zero exit code.", f"exit:{return_code}")
@@ -1027,6 +1191,7 @@ app = FastAPI()
 
 @app.on_event("startup")
 def on_startup() -> None:
+    startup_snapshot = lifecycle.snapshot()
     store.load_state()
     recovered_runs = store.reconcile_in_memory_runs_after_restart()
     reconciled = run_logger.reconcile_orphaned_runs()
@@ -1034,6 +1199,10 @@ def on_startup() -> None:
         "server_start",
         "Workbench server started.",
         payload={
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "startupReason": startup_snapshot["reason"],
+            "startupSignal": startup_snapshot["signal"],
             "reconciledOrphanedLogs": reconciled,
             "recoveredRuns": recovered_runs,
             "runLogDir": str(RUN_LOG_DIR),
@@ -1044,6 +1213,10 @@ def on_startup() -> None:
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
+    shutdown_snapshot = lifecycle.snapshot()
+    shutdown_reason = shutdown_snapshot["reason"]
+    if shutdown_reason in {"unknown", "process_start"}:
+        shutdown_reason = "application_shutdown"
     active_runs = [
         {"taskId": task_id, "runId": run["id"], "status": run["status"]}
         for task_id, runs in store.runs_by_task_id.items()
@@ -1053,7 +1226,14 @@ def on_shutdown() -> None:
     system_logger.append(
         "server_shutdown",
         "Workbench server stopped.",
-        payload={"activeRuns": active_runs},
+        payload={
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "shutdownReason": shutdown_reason,
+            "shutdownSignal": shutdown_snapshot["signal"],
+            "exitCode": shutdown_snapshot["exitCode"],
+            "activeRuns": active_runs,
+        },
     )
 
 
@@ -1162,6 +1342,8 @@ def get_local_ip() -> str:
 
 
 if __name__ == "__main__":
+    install_lifecycle_signal_handlers()
+    lifecycle.mark_shutdown("process_start")
     local_ip = get_local_ip()
     port = 8000
     print("\n" + "=" * 50)

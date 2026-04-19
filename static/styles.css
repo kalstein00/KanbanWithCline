@@ -522,6 +522,8 @@ select {
 .task-summary-meta,
 .constraint-list,
 .risk-list,
+.checklist-summary,
+.checklist-list,
 .artifact-list,
 .timeline-list,
 .run-history-list,
@@ -537,6 +539,7 @@ select {
 }
 
 .timeline-list,
+.checklist-list,
 .artifact-list,
 .run-history-list,
 .event-list {
@@ -544,6 +547,7 @@ select {
 }
 
 .timeline-item,
+.checklist-item,
 .artifact-item,
 .run-history-item,
 .event-item,
@@ -559,6 +563,16 @@ select {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+}
+
+.checklist-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.checklist-item.done {
+    box-shadow: inset 0 0 0 1px rgba(0, 106, 96, 0.16);
 }
 
 .run-history-item {

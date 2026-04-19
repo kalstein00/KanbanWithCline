@@ -578,6 +578,7 @@ function renderDetailPanel() {
         renderTimeline([]);
         renderEvents([]);
         renderArtifacts([]);
+        renderChecklist([]);
         renderEvaluation(null, null);
         syncActionState(null);
         return;
@@ -606,6 +607,7 @@ function renderDetailPanel() {
     renderTimeline(run.steps || []);
     renderEvents(run.events || []);
     renderArtifacts(artifacts);
+    renderChecklist(run.planChecklist || []);
     renderEvaluation(verdict, failureAnalysis);
     syncActionState(run.status);
 }
@@ -686,6 +688,37 @@ function renderTimeline(steps) {
             <p>${escapeHtml(step.summary)}</p>
         `;
         list.appendChild(item);
+    });
+}
+
+function renderChecklist(items) {
+    const summary = document.getElementById("checklistSummary");
+    const list = document.getElementById("checklistList");
+    list.innerHTML = "";
+
+    if (!items.length) {
+        summary.innerHTML = '<span class="meta-pill">No structured checklist yet</span>';
+        list.innerHTML = '<p class="empty-copy">Cline has not emitted a task_progress checklist for this run.</p>';
+        return;
+    }
+
+    const completedCount = items.filter((item) => item.done).length;
+    summary.innerHTML = `
+        <span class="meta-pill">${completedCount}/${items.length} completed</span>
+        <span class="status-badge subtle">${items.length - completedCount} remaining</span>
+    `;
+
+    items.forEach((item) => {
+        const row = document.createElement("article");
+        row.className = `checklist-item${item.done ? " done" : ""}`;
+        row.innerHTML = `
+            <div class="timeline-meta">
+                <span class="meta-pill">${item.done ? "done" : "pending"}</span>
+                <span class="status-badge subtle">${formatDate(item.updatedAt)}</span>
+            </div>
+            <p>${escapeHtml(item.label)}</p>
+        `;
+        list.appendChild(row);
     });
 }
 
