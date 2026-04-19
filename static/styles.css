@@ -494,7 +494,8 @@ select {
 .risk-list,
 .artifact-list,
 .timeline-list,
-.run-history-list {
+.run-history-list,
+.event-list {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
@@ -507,18 +508,26 @@ select {
 
 .timeline-list,
 .artifact-list,
-.run-history-list {
+.run-history-list,
+.event-list {
     flex-direction: column;
 }
 
 .timeline-item,
 .artifact-item,
 .run-history-item,
+.event-item,
 .runner-card,
 .verdict-card {
     padding: 1rem;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.72);
+}
+
+.event-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .run-history-item {

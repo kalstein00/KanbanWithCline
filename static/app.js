@@ -31,6 +31,11 @@ const state = {
     verdictsByRunId: {},
     selectedTaskId: null,
     selectedRunIdByTaskId: {},
+    stream: {
+        connected: false,
+        supported: false,
+        source: null,
+    },
     filters: {
         type: "all",
         status: "all",
@@ -96,6 +101,7 @@ async function initWorkbench() {
     renderWorkbench();
     await loadMeta();
     await loadBoard();
+    connectRunStream();
     window.setInterval(pollActiveRuns, 5000);
 }
 
@@ -114,10 +120,71 @@ function bindEvents() {
         renderWorkbench();
     });
 
-    retryBtn.addEventListener("click", () => triggerRunAction("retry"));
+    retryBtn.addEventListener("click", () => {
+        const run = getSelectedRun();
+        const action = getPrimaryRunAction(run?.status);
+        triggerRunAction(action);
+    });
     reopenBtn.addEventListener("click", () => patchRun("reopen"));
     approveBtn.addEventListener("click", () => patchRun("approve"));
     cancelRunBtn.addEventListener("click", () => patchRun("cancel"));
+}
+
+function connectRunStream() {
+    if (!window.EventSource || state.stream.source || state.meta.streaming?.sse !== true) {
+        return;
+    }
+
+    state.stream.supported = true;
+    const source = new EventSource("/api/stream");
+    state.stream.source = source;
+
+    source.addEventListener("open", () => {
+        state.stream.connected = true;
+        renderBanner();
+    });
+
+    source.addEventListener("message", (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleStreamMessage(data);
+        } catch (error) {
+            state.ui.error = `Stream payload failed to parse: ${error.message}`;
+            renderBanner();
+        }
+    });
+
+    source.addEventListener("error", () => {
+        state.stream.connected = false;
+        renderBanner();
+    });
+}
+
+function handleStreamMessage(message) {
+    if (message.kind !== "run_update" || !message.payload) {
+        return;
+    }
+
+    const { task, run, artifacts, verdict } = message.payload;
+    if (task) {
+        upsertTask(task);
+    }
+    if (run) {
+        replaceRunInCache(run.taskId, run);
+        state.artifactsByRunId[run.id] = artifacts || run.artifacts || [];
+        state.verdictsByRunId[run.id] = verdict || run.verdict || null;
+        state.selectedRunIdByTaskId[run.taskId] = state.selectedRunIdByTaskId[run.taskId] || run.id;
+    }
+    renderWorkbench();
+}
+
+function upsertTask(task) {
+    const index = state.tasks.findIndex((item) => item.id === task.id);
+    if (index >= 0) {
+        state.tasks[index] = task;
+    } else {
+        state.tasks.unshift(task);
+    }
 }
 
 async function loadMeta() {
@@ -309,6 +376,10 @@ async function patchRun(action) {
 }
 
 async function pollActiveRuns() {
+    if (state.stream.connected) {
+        return;
+    }
+
     if (state.ui.loadingBoard || state.ui.loadingDetail || state.ui.actionPending || state.ui.backgroundRefreshing) {
         return;
     }
@@ -337,6 +408,12 @@ function renderBanner() {
         notices.push(`Cline connected via ${state.meta.clinePath}`);
     } else {
         notices.push("Cline not detected. Run actions use the mock executor path.");
+    }
+
+    if (state.stream.connected) {
+        notices.push("Live stream active.");
+    } else if (state.stream.supported) {
+        notices.push("Live stream reconnecting. Polling fallback remains available.");
     }
 
     if (state.ui.error) {
@@ -477,6 +554,7 @@ function renderDetailPanel() {
         document.getElementById("detailRunCommand").textContent = "No command preview available.";
         document.getElementById("clineAvailability").textContent = state.meta.clineAvailable ? "available" : "unavailable";
         renderTimeline([]);
+        renderEvents([]);
         renderArtifacts([]);
         renderVerdict(null);
         syncActionState(null);
@@ -495,6 +573,7 @@ function renderDetailPanel() {
     document.getElementById("clineAvailability").textContent = state.meta.clineAvailable ? "available" : "unavailable";
 
     renderTimeline(run.steps || []);
+    renderEvents(run.events || []);
     renderArtifacts(artifacts);
     renderVerdict(verdict);
     syncActionState(run.status);
@@ -579,6 +658,29 @@ function renderTimeline(steps) {
     });
 }
 
+function renderEvents(events) {
+    const list = document.getElementById("eventList");
+    list.innerHTML = "";
+
+    if (!events.length) {
+        list.innerHTML = '<p class="empty-copy">No live events have been recorded yet.</p>';
+        return;
+    }
+
+    [...events].reverse().slice(0, 12).forEach((event) => {
+        const item = document.createElement("article");
+        item.className = "event-item";
+        item.innerHTML = `
+            <div class="timeline-meta">
+                <span class="meta-pill">${escapeHtml(event.type || "event")}</span>
+                <span class="status-badge subtle">${formatDate(event.ts)}</span>
+            </div>
+            <p>${escapeHtml(event.summary || "No summary available.")}</p>
+        `;
+        list.appendChild(item);
+    });
+}
+
 function renderArtifacts(artifacts) {
     const list = document.getElementById("artifactList");
     list.innerHTML = "";
@@ -630,12 +732,14 @@ function renderRisks(risks) {
 
 function syncActionState(status) {
     const disabled = state.ui.actionPending || state.ui.loadingDetail;
+    retryBtn.textContent = getPrimaryRunActionLabel(status);
     retryBtn.disabled = disabled;
     reopenBtn.disabled = disabled;
     approveBtn.disabled = disabled;
     cancelRunBtn.disabled = disabled;
 
     if (!status) {
+        retryBtn.textContent = "Start Run";
         retryBtn.disabled = false;
         reopenBtn.disabled = true;
         approveBtn.disabled = true;
@@ -663,6 +767,17 @@ function syncActionState(status) {
         cancelRunBtn.disabled = true;
         approveBtn.disabled = true;
     }
+}
+
+function getPrimaryRunAction(status) {
+    if (!status || ["draft", "planned"].includes(status)) {
+        return "start";
+    }
+    return "retry";
+}
+
+function getPrimaryRunActionLabel(status) {
+    return getPrimaryRunAction(status) === "start" ? "Start Run" : "Retry";
 }
 
 function openTaskModal() {
